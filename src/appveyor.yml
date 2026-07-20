@@ -13,7 +13,7 @@ build_script:
     dotnet test src --configuration Release --no-build --no-restore --report-trx
     $testExit = $LASTEXITCODE
     $url = "https://ci.appveyor.com/api/testresults/mstest/$($env:APPVEYOR_JOB_ID)"
-    Get-ChildItem TestResults -Filter *.trx -Recurse | ForEach-Object {
+    Get-ChildItem -Recurse -Filter *.trx | ForEach-Object {
       Write-Host "Uploading test results: $($_.FullName)"
       try { (New-Object System.Net.WebClient).UploadFile($url, $_.FullName) }
       catch { Write-Host "Failed to upload test results: $_" }
