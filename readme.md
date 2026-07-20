@@ -92,8 +92,3 @@ using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 ```
 <sup><a href='/src/Tests/Snippets.cs#L19-L24' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStreamAsync' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
-
-
-## Icon
-
-[Pi](https://thenounproject.com/icon/pi-2131020/) designed by [Zaidan](https://thenounproject.com/creator/mzaidanfiros/) from [The Noun Project](https://thenounproject.com).
