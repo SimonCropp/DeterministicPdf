@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MarkdownSnippets.MsBuild" PrivateAssets="all" />
+    <PackageReference Include="TUnit" />
+    <!-- Test-only: renders the normalized output back to prove it is still a loadable document. -->
+    <PackageReference Include="Docnet.Core" />
+    <ProjectReference Include="..\DeterministicPdf\DeterministicPdf.csproj" />
+    <PackageReference Include="ProjectDefaults" PrivateAssets="all" />
+
+    <None Update="sample*.pdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

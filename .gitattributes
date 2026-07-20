@@ -1,0 +1,23 @@
+* text=auto eol=lf
+*.snk binary
+*.png binary
+*.zip binary
+*.xlsx binary
+*.docx binary
+*.sha256 binary
+*.dll binary
+*.nupkg binary
+*.p7s binary
+
+*.verified.json text eol=lf working-tree-encoding=UTF-8
+*.verified.md text eol=lf working-tree-encoding=UTF-8
+*.verified.nuspec text eol=lf working-tree-encoding=UTF-8
+*.verified.rels text eol=lf working-tree-encoding=UTF-8
+*.verified.xml text eol=lf working-tree-encoding=UTF-8
+*.verified.txt text eol=lf working-tree-encoding=UTF-8
+
+.editorconfig text eol=lf working-tree-encoding=UTF-8
+*.sln.DotSettings text eol=lf working-tree-encoding=UTF-8
+*.slnx.DotSettings text eol=lf working-tree-encoding=UTF-8
+
+*.pdf binary
