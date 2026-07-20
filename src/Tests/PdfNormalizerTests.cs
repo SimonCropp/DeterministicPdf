@@ -174,7 +174,7 @@ public class PdfNormalizerTests
     {
         // A page subset is re-serialized by pdfium (reintroducing volatile fields) then normalized;
         // it must remain a valid one-page document.
-        var data = File.ReadAllBytes("sample.pdf");
+        var data = await File.ReadAllBytesAsync("sample.pdf");
         var split = DocLib.Instance.Split(data, 1, 1);
         split = PdfNormalizer.Normalize(split);
 
@@ -186,7 +186,7 @@ public class PdfNormalizerTests
     public async Task DoesNotMutateTheInputArray()
     {
         // The byte[] overload is non-destructive: the caller keeps ownership of the buffer it passed.
-        var data = File.ReadAllBytes("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
         var original = (byte[]) data.Clone();
 
         PdfNormalizer.Normalize(data);
@@ -197,10 +197,11 @@ public class PdfNormalizerTests
     [Test]
     public async Task StreamOverloadMatchesByteOverload()
     {
-        var data = File.ReadAllBytes("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
         var expected = PdfNormalizer.Normalize(data);
 
         using var source = new MemoryStream(data);
+        // ReSharper disable once MethodHasAsyncOverload
         using var result = PdfNormalizer.Normalize(source);
 
         await Assert.That(result.ToArray()).IsEquivalentTo(expected);
@@ -209,7 +210,7 @@ public class PdfNormalizerTests
     [Test]
     public async Task AsyncProducesSameOutputAsSync()
     {
-        var data = File.ReadAllBytes("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
         var expected = PdfNormalizer.Normalize(data);
 
         // A non-seekable, non-MemoryStream source to exercise the copy path.

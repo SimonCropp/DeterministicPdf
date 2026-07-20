@@ -1,10 +1,14 @@
+// ReSharper disable MethodHasAsyncOverload
+// ReSharper disable UnusedVariable
+
+[SuppressMessage("Style", "IDE0059:Unnecessary assignment of a value")]
 public static class Snippets
 {
     static async Task Usage(string pdfPath)
     {
         #region NormalizeBytes
 
-        var bytes = File.ReadAllBytes(pdfPath);
+        var bytes = await File.ReadAllBytesAsync(pdfPath);
         var normalized = PdfNormalizer.Normalize(bytes);
 
         #endregion
