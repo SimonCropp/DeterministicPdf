@@ -61,10 +61,10 @@ The input array is not modified; a normalized copy is returned.
 <!-- snippet: NormalizeBytes -->
 <a id='snippet-NormalizeBytes'></a>
 ```cs
-var bytes = File.ReadAllBytes(pdfPath);
+var bytes = await File.ReadAllBytesAsync(pdfPath);
 var normalized = PdfNormalizer.Normalize(bytes);
 ```
-<sup><a href='/src/Tests/Snippets.cs#L5-L10' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeBytes' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/src/Tests/Snippets.cs#L9-L14' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeBytes' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 
@@ -78,7 +78,7 @@ Returns a fresh `MemoryStream` positioned at 0.
 using var sourceStream = File.OpenRead(pdfPath);
 using var target = PdfNormalizer.Normalize(sourceStream);
 ```
-<sup><a href='/src/Tests/Snippets.cs#L12-L17' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStream' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/src/Tests/Snippets.cs#L16-L21' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStream' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 
@@ -90,5 +90,5 @@ using var target = PdfNormalizer.Normalize(sourceStream);
 using var asyncSource = File.OpenRead(pdfPath);
 using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 ```
-<sup><a href='/src/Tests/Snippets.cs#L19-L24' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStreamAsync' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/src/Tests/Snippets.cs#L23-L28' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStreamAsync' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
