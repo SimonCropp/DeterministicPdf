@@ -208,6 +208,67 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task StreamOverloadHonorsPosition()
+    {
+        // The document is preceded by unrelated bytes and the stream is positioned at the start of
+        // the document, as it would be when reading from a container. Only the remainder is read.
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var expected = PdfNormalizer.Normalize(data);
+
+        var prefix = "unrelated leading bytes"u8.ToArray();
+        using var source = new MemoryStream([..prefix, ..data]);
+        source.Position = prefix.Length;
+        // ReSharper disable once MethodHasAsyncOverload
+        using var result = PdfNormalizer.Normalize(source);
+
+        await Assert.That(result.ToArray()).IsEquivalentTo(expected);
+    }
+
+    [Test]
+    public async Task StreamOverloadHonorsPositionOnExposedBuffer()
+    {
+        // A MemoryStream that exposes its backing array (as produced by `new MemoryStream()` then
+        // written to, which is how a caller hands over a freshly generated document) takes the
+        // direct-copy fast path rather than the CopyTo fallback. It must honor Position too.
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var expected = PdfNormalizer.Normalize(data);
+
+        var prefix = "unrelated leading bytes"u8.ToArray();
+        using var source = new MemoryStream();
+        source.Write(prefix, 0, prefix.Length);
+        source.Write(data, 0, data.Length);
+        source.Position = prefix.Length;
+
+        // ReSharper disable once MethodHasAsyncOverload
+        using var result = PdfNormalizer.Normalize(source);
+
+        await Assert.That(result.ToArray()).IsEquivalentTo(expected);
+    }
+
+    [Test]
+    public async Task StreamOverloadHonorsPositionConsistentlyAcrossStreamTypes()
+    {
+        // A MemoryStream and a FileStream positioned identically must produce the same result. The
+        // MemoryStream fast path reads the backing array directly, so it has to respect Position
+        // the same way the copy fallback does.
+        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var prefixed = new byte[8 + data.Length];
+        Array.Copy(data, 0, prefixed, 8, data.Length);
+
+        using var temp = await TempFile.CreateBinary(prefixed, ".pdf");
+
+        using var memorySource = new MemoryStream(prefixed);
+        memorySource.Position = 8;
+        using var fromMemory = await PdfNormalizer.NormalizeAsync(memorySource);
+
+        using var fileSource = File.OpenRead(temp.Path);
+        fileSource.Position = 8;
+        using var fromFile = await PdfNormalizer.NormalizeAsync(fileSource);
+
+        await Assert.That(fromMemory.ToArray()).IsEquivalentTo(fromFile.ToArray());
+    }
+
+    [Test]
     public async Task AsyncProducesSameOutputAsSync()
     {
         var data = await File.ReadAllBytesAsync("sample-fop.pdf");
