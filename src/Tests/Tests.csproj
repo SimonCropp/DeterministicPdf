@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="MarkdownSnippets.MsBuild" PrivateAssets="all" />
     <PackageReference Include="TUnit" />
+    <PackageReference Include="Verify" />
     <!-- Test-only: renders the normalized output back to prove it is still a loadable document. -->
     <PackageReference Include="Docnet.Core" />
     <ProjectReference Include="..\DeterministicPdf\DeterministicPdf.csproj" />
