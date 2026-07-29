@@ -19,6 +19,7 @@ A PDF records when it was produced and stamps every render with fresh identifier
 
  * The trailer file identifier `/ID [<...> <...>]`
  * The document information dictionary dates `/CreationDate` and `/ModDate`
+ * The page and page-piece dictionary date `/LastModified`, which a producer stamps with a wall-clock time for its own private data (PDFTron writes one onto the form XObject it uses for a watermark)
  * The XMP metadata dates `xmp:CreateDate`, `xmp:ModifyDate`, and `xmp:MetadataDate`
  * The Dublin Core `dc:date`, whether written as direct text content or nested in an `rdf:Seq`/`rdf:li` array
  * The XMP per-generation identifiers `xmpMM:DocumentID`, `xmpMM:InstanceID`, and `xmpMM:OriginalDocumentID`

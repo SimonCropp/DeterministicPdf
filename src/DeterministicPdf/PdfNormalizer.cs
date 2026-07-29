@@ -2,8 +2,9 @@ namespace DeterministicPdf;
 
 /// <summary>
 /// Neutralizes the non-deterministic fields of a PDF (the trailer <c>/ID</c>, the document
-/// information <c>/CreationDate</c> and <c>/ModDate</c>, and the equivalent XMP metadata dates and
-/// identifiers) so that the same source document always produces byte-identical output.
+/// information <c>/CreationDate</c> and <c>/ModDate</c>, the page and page-piece
+/// <c>/LastModified</c>, and the equivalent XMP metadata dates and identifiers) so that the same
+/// source document always produces byte-identical output.
 /// </summary>
 /// <remarks>
 /// Neutralizing the values (dates and identifiers) is done in place and is length-preserving: only the
@@ -58,6 +59,12 @@ public static partial class PdfNormalizer
         // Document information dictionary dates.
         ZeroPdfString(data, "/CreationDate"u8, Fill.Digits);
         ZeroPdfString(data, "/ModDate"u8, Fill.Digits);
+
+        // Page and page-piece dictionary modification date. A producer stamps a wall-clock time here
+        // for its own private data, so it changes on every render even when nothing about the document
+        // did (PDFTron writes one onto the form XObject it uses for a watermark:
+        // /PieceInfo<</PDFTRON<</LastModified(D:...)/Private/Watermark>>>>).
+        ZeroPdfString(data, "/LastModified"u8, Fill.Digits);
 
         // Trailer / cross-reference-stream file identifier: /ID [<...> <...>].
         ZeroFileId(data);
