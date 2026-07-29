@@ -25,6 +25,27 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task NeutralizesPieceInfoLastModified()
+    {
+        // A producer stamps a wall-clock time into the /LastModified of a page-piece dictionary for
+        // its own private data. PDFTron does this on the form XObject it uses for a watermark, so the
+        // value changes on every render even though nothing about the document did. Note the value
+        // follows the key with no separating whitespace.
+        var input = "/PieceInfo<</PDFTRON<</LastModified(D:20260729134217Z)/Private/Watermark>>>>";
+        var expected = "/PieceInfo<</PDFTRON<</LastModified(D:00000000000000Z)/Private/Watermark>>>>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesPageLastModified()
+    {
+        // The page dictionary form: /LastModified is required on a page that carries a /PieceInfo.
+        var input = "/Type /Page /LastModified (D:20240115093000+05'30') /PieceInfo 12 0 R";
+        var expected = "/Type /Page /LastModified (D:00000000000000+00'00') /PieceInfo 12 0 R";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task NeutralizesDublinCoreDate()
     {
         // Some producers (for example older Apache FOP) write the render time straight into the
@@ -98,9 +119,9 @@ public class PdfNormalizerTests
     [Test]
     public async Task LeavesLookalikeKeysUntouched()
     {
-        // /IDTree is a name-tree key (not the file identifier), /ModDateStamp is a different name,
-        // and a self-closing date element has no content: none should be altered.
-        var input = "/IDTree [1 2] /ModDateStamp(20240101) <xmp:CreateDate/>2024";
+        // /IDTree is a name-tree key (not the file identifier), /ModDateStamp and /LastModifiedBy are
+        // different names, and a self-closing date element has no content: none should be altered.
+        var input = "/IDTree [1 2] /ModDateStamp(20240101) /LastModifiedBy(2024) <xmp:CreateDate/>2024";
         await Assert.That(Normalize(input)).IsEqualTo(input);
     }
 

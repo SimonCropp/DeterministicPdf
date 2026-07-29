@@ -26,6 +26,12 @@ Two places record the same volatile information, and both must be handled:
 
 Plus the trailer file identifier `/ID [<...> <...>]`.
 
+A third, per-producer stamp is `/LastModified` in a page or page-piece (`/PieceInfo`) dictionary. It is
+a plain date string like `/ModDate`, so the same `ZeroPdfString` pass covers it. PDFTron writes one
+onto the form XObject it uses for a watermark:
+`/PieceInfo<</PDFTRON<</LastModified(D:20260729134217Z)/Private/Watermark>>>>`. Note the value can
+follow the key with no separating whitespace.
+
 ### Why values are zeroed rather than removed
 
 Zeroing is **length-preserving**, so every offset in the cross-reference table stays valid and no
