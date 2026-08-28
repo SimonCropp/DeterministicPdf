@@ -106,4 +106,7 @@ the head — so the whole document is always materialized in a buffer.
 - `src/DeterministicPdf/` — the library
   - `PdfNormalizer.cs` — the byte[] entry point and every pass
   - `PdfNormalizer_Streams.cs` — stream overloads
+- `src/DeterministicPdf.Tool/` — `detpdf`, the CliFx dotnet tool wrapping `PdfNormalizer.Normalize`
+  - `NormalizeCommand.cs` — the single (default) command
+  - `FileResolver.cs` — expands the path parameter into source/target file pairs
 - `src/Tests/` — TUnit tests

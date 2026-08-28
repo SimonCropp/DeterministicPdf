@@ -4,6 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="CliFx" Version="3.0.0" />
     <PackageVersion Include="Docnet.Core" Version="2.6.0" />
     <PackageVersion Include="MarkdownSnippets.MsBuild" Version="28.4.2" />
     <PackageVersion Include="Polyfill" Version="11.2.0" />

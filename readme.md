@@ -93,3 +93,53 @@ using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 ```
 <sup><a href='/src/Tests/Snippets.cs#L23-L28' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStreamAsync' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
+
+
+## CLI tool
+
+A [dotnet tool](https://learn.microsoft.com/en-us/dotnet/core/tools/global-tools) that applies the same normalization to files on disk.
+
+ * https://nuget.org/packages/DeterministicPdf.Tool
+
+```
+dotnet tool install -g DeterministicPdf.Tool
+```
+
+
+### Usage
+
+```
+detpdf <path> [options]
+```
+
+`path` is a PDF file, or a directory containing PDFs. It is normalized in place unless `--target` is used.
+
+ * `-t|--target` Write results here instead of modifying the input in place. An output file path when the input is a file, otherwise a directory mirroring the input tree.
+ * `-p|--pattern` Search patterns applied when the input is a directory. Defaults to `*.pdf`. Repeat the option for multiple patterns.
+ * `-r|--recursive` Recurse into subdirectories when the input is a directory.
+ * `--check` Report which files are not already normalized without writing anything. Exits with code 1 if any are found.
+ * `--continue-on-error` Keep processing the remaining files after a failure, then exit with code 1.
+ * `-q|--quiet` Suppress per file and summary output. Errors are still written.
+
+A file that is already normalized is left untouched, so an in place run does not disturb its timestamp.
+
+
+### Examples
+
+Normalize one document in place:
+
+```
+detpdf document.pdf
+```
+
+Normalize a tree into a separate output directory:
+
+```
+detpdf ./input -r --target ./output
+```
+
+Fail a build when any document is not deterministic:
+
+```
+detpdf ./artifacts -r --check
+```

@@ -12,5 +12,6 @@
     <File Path="nuget.md" />
   </Folder>
   <Project Path="DeterministicPdf/DeterministicPdf.csproj" />
+  <Project Path="DeterministicPdf.Tool/DeterministicPdf.Tool.csproj" />
   <Project Path="Tests/Tests.csproj" />
 </Solution>
