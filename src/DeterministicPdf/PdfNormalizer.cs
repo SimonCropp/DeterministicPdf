@@ -56,6 +56,7 @@ public static partial class PdfNormalizer
     /// Returns a normalized copy of <paramref name="data"/> and reports what was altered. The input
     /// array is not modified.
     /// </summary>
+    /// <param name="data">The document to normalize.</param>
     /// <param name="changes">
     /// What actually differed, in the order the passes run. Empty when the document was already
     /// normalized, since a pass records only when bytes really changed rather than merely because it
