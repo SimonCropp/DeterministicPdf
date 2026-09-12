@@ -16,11 +16,27 @@ public static partial class PdfNormalizer
     /// </remarks>
     public static MemoryStream Normalize(Stream source) =>
         // The buffer is built here, so it is owned here: patch it in place rather than copying again.
-        new(NormalizeCore(ToBytes(source)));
+        new(NormalizeCore(ToBytes(source), new()));
 
     /// <inheritdoc cref="Normalize(Stream)"/>
     public static async Task<MemoryStream> NormalizeAsync(Stream source, Cancel cancel = default) =>
-        new(NormalizeCore(await ToBytesAsync(source, cancel)));
+        new(NormalizeCore(await ToBytesAsync(source, cancel), new()));
+
+    /// <inheritdoc cref="Normalize(Stream)"/>
+    /// <param name="source">The document to normalize.</param>
+    /// <param name="changes"><inheritdoc cref="Normalize(byte[], out IReadOnlyList{NormalizeChange})" path="/param[@name='changes']"/></param>
+    public static MemoryStream Normalize(Stream source, out IReadOnlyList<NormalizeChange> changes)
+    {
+        var recorder = new ChangeRecorder();
+        var result = new MemoryStream(NormalizeCore(ToBytes(source), recorder));
+        changes = recorder.Changes;
+        return result;
+    }
+
+    // No async counterpart to the overload above, deliberately. Only reading the stream is
+    // asynchronous — normalizing is synchronous work over the resident buffer — so an async report
+    // overload would have to return the report beside the stream in a tuple or a wrapper, for no
+    // gain over reading the bytes and calling Normalize(byte[], out ...).
 
     // Both paths read from the current position to the end, so the result never depends on the
     // concrete stream type. MemoryStream.ToArray is deliberately not used as the fast path: it

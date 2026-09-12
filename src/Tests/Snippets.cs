@@ -26,5 +26,15 @@ public static class Snippets
         using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 
         #endregion
+
+        #region NormalizeReport
+
+        var reported = PdfNormalizer.Normalize(bytes, out var changes);
+        foreach (var change in changes)
+        {
+            Console.WriteLine($"{change.Name} x{change.Count}");
+        }
+
+        #endregion
     }
 }

@@ -84,6 +84,30 @@ untouched.
 Normalizing is not a streaming operation — the xref table at the tail records positions of objects at
 the head — so the whole document is always materialized in a buffer.
 
+## The change report
+
+`Normalize(byte[], out IReadOnlyList<NormalizeChange>)` and `Normalize(Stream, out ...)` report what
+was neutralized. `NormalizeCore` always builds a `ChangeRecorder`; the non-reporting overloads just
+drop it.
+
+The rule that makes the report worth anything: **a pass records only when bytes actually differed**,
+never merely because it ran. `Overwrite` is the single choke point every zeroing pass goes through,
+so it returns whether it changed anything, and it skips writing `'0'` over a `'0'`. Without that, a
+second normalization of the same document would report every field again and the report could not be
+used to answer "why is this document not deterministic?".
+
+The canonicalization pass is reported by reference equality instead: every bail-out path in
+`CanonicalizeXmp`, and the already-canonical case, returns the input array itself, and only a real
+rewrite returns a new one.
+
+Names come from the `u8` key spans the passes already carry, so there is no parallel list of strings
+to drift — `ChangeRecorder.AsciiString` decodes them by hand rather than through `Encoding.ASCII`,
+whose span overloads differ across the six target frameworks. XMP names are recorded as
+`openTag[1..]`, dropping the `<` so the report names the element rather than its opening tag.
+
+There is deliberately no async reporting overload; the reason is on the comment in
+`PdfNormalizer_Streams.cs`.
+
 ## Testing
 
 - TUnit (`await Assert.That(x).IsEqualTo(y)`), no Verify — these are plain assertion tests.

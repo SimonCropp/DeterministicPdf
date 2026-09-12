@@ -93,3 +93,24 @@ using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 ```
 <sup><a href='/src/Tests/Snippets.cs#L23-L28' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeStreamAsync' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
+
+
+### Reporting what changed
+
+An overload reports what was neutralized, named as it appears in the document: a key such as `/CreationDate` or `/ID`, an XMP element such as `xmp:CreateDate`, or `XMP packet whitespace` for the canonicalization pass.
+
+<!-- snippet: NormalizeReport -->
+<a id='snippet-NormalizeReport'></a>
+```cs
+var reported = PdfNormalizer.Normalize(bytes, out var changes);
+foreach (var change in changes)
+{
+    Console.WriteLine($"{change.Name} x{change.Count}");
+}
+```
+<sup><a href='/src/Tests/Snippets.cs#L30-L38' title='Snippet source file'>snippet source</a> | <a href='#snippet-NormalizeReport' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+A change is only reported when bytes actually differed, never merely because a pass ran. So an already normalized document reports nothing, and the list doubles as the answer to "why is this document not deterministic?".
+
+There is no async counterpart. Only reading the stream is asynchronous — normalizing is synchronous work over the resident buffer — so an async overload would have to return the report beside the stream for no gain over reading the bytes first.

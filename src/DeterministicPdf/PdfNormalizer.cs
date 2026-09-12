@@ -49,50 +49,78 @@ public static partial class PdfNormalizer
         // ownership of the buffer it passed in.
         var copy = new byte[data.Length];
         Array.Copy(data, copy, data.Length);
-        return NormalizeCore(copy);
+        return NormalizeCore(copy, new());
+    }
+
+    /// <summary>
+    /// Returns a normalized copy of <paramref name="data"/> and reports what was altered. The input
+    /// array is not modified.
+    /// </summary>
+    /// <param name="changes">
+    /// What actually differed, in the order the passes run. Empty when the document was already
+    /// normalized, since a pass records only when bytes really changed rather than merely because it
+    /// ran — which is what makes this usable as the reason a document is not yet deterministic.
+    /// </param>
+    public static byte[] Normalize(byte[] data, out IReadOnlyList<NormalizeChange> changes)
+    {
+        var copy = new byte[data.Length];
+        Array.Copy(data, copy, data.Length);
+        var recorder = new ChangeRecorder();
+        var result = NormalizeCore(copy, recorder);
+        changes = recorder.Changes;
+        return result;
     }
 
     // Normalizes 'data' in place, returning either the same array or (when the XMP packet is
     // canonicalized, which changes its length) a freshly built one.
-    static byte[] NormalizeCore(byte[] data)
+    static byte[] NormalizeCore(byte[] data, ChangeRecorder recorder)
     {
         // Document information dictionary dates.
-        ZeroPdfString(data, "/CreationDate"u8, Fill.Digits);
-        ZeroPdfString(data, "/ModDate"u8, Fill.Digits);
+        ZeroPdfString(data, "/CreationDate"u8, Fill.Digits, recorder);
+        ZeroPdfString(data, "/ModDate"u8, Fill.Digits, recorder);
 
         // Page and page-piece dictionary modification date. A producer stamps a wall-clock time here
         // for its own private data, so it changes on every render even when nothing about the document
         // did (PDFTron writes one onto the form XObject it uses for a watermark:
         // /PieceInfo<</PDFTRON<</LastModified(D:...)/Private/Watermark>>>>).
-        ZeroPdfString(data, "/LastModified"u8, Fill.Digits);
+        ZeroPdfString(data, "/LastModified"u8, Fill.Digits, recorder);
 
         // Trailer / cross-reference-stream file identifier: /ID [<...> <...>].
-        ZeroFileId(data);
+        ZeroFileId(data, recorder);
 
         // XMP metadata dates (uncompressed metadata streams only).
-        ZeroXmpElement(data, "<xmp:CreateDate"u8, Fill.Digits);
-        ZeroXmpElement(data, "<xmp:ModifyDate"u8, Fill.Digits);
-        ZeroXmpElement(data, "<xmp:MetadataDate"u8, Fill.Digits);
+        ZeroXmpElement(data, "<xmp:CreateDate"u8, Fill.Digits, recorder);
+        ZeroXmpElement(data, "<xmp:ModifyDate"u8, Fill.Digits, recorder);
+        ZeroXmpElement(data, "<xmp:MetadataDate"u8, Fill.Digits, recorder);
 
         // Dublin Core date. Unlike the xmp:* dates above it is an ordered array (seq Date), so the
         // value is nested inside rdf:Seq/rdf:li rather than being direct text content of the element
         // (this is what Apache FOP emits).
-        ZeroXmpElementTree(data, "<dc:date"u8, "</dc:date>"u8, Fill.Digits);
+        ZeroXmpElementTree(data, "<dc:date"u8, "</dc:date>"u8, Fill.Digits, recorder);
 
         // XMP per-generation identifiers.
-        ZeroXmpElement(data, "<xmpMM:DocumentID"u8, Fill.All);
-        ZeroXmpElement(data, "<xmpMM:InstanceID"u8, Fill.All);
-        ZeroXmpElement(data, "<xmpMM:OriginalDocumentID"u8, Fill.All);
+        ZeroXmpElement(data, "<xmpMM:DocumentID"u8, Fill.All, recorder);
+        ZeroXmpElement(data, "<xmpMM:InstanceID"u8, Fill.All, recorder);
+        ZeroXmpElement(data, "<xmpMM:OriginalDocumentID"u8, Fill.All, recorder);
 
         // Collapse the JRE-dependent XMP packet whitespace and repair the cross-reference table so the
         // output is byte-identical across platforms. This can shrink the buffer, so the result of the
         // rewrite (a new buffer, or the same one when there is nothing to do) is returned to the caller.
-        return CanonicalizeXmp(data);
+        //
+        // Every bail-out path hands back the input array itself, and so does the already-canonical
+        // case, so reference equality is exactly the test for "this pass did something".
+        var canonicalized = CanonicalizeXmp(data);
+        if (!ReferenceEquals(canonicalized, data))
+        {
+            recorder.Record("XMP packet whitespace");
+        }
+
+        return canonicalized;
     }
 
     // Finds a name key, then overwrites the string value that follows it. The value may be a
     // literal string "(...)" or a hex string "<...>".
-    static void ZeroPdfString(byte[] data, ReadOnlySpan<byte> key, Fill fill)
+    static void ZeroPdfString(byte[] data, ReadOnlySpan<byte> key, Fill fill, ChangeRecorder recorder)
     {
         var pos = 0;
         while (true)
@@ -116,14 +144,22 @@ public static partial class PdfNormalizer
             {
                 var start = i + 1;
                 var end = FindLiteralEnd(data, start);
-                Overwrite(data, start, end, fill);
+                if (Overwrite(data, start, end, fill))
+                {
+                    recorder.Record(key);
+                }
+
                 pos = end;
             }
             else if (data[i] == (byte) '<' && (i + 1 >= data.Length || data[i + 1] != (byte) '<'))
             {
                 var start = i + 1;
                 var end = FindByte(data, start, (byte) '>');
-                Overwrite(data, start, end, Fill.Hex);
+                if (Overwrite(data, start, end, Fill.Hex))
+                {
+                    recorder.Record(key);
+                }
+
                 pos = end;
             }
         }
@@ -131,7 +167,7 @@ public static partial class PdfNormalizer
 
     // Finds "/ID" followed by an array and zeroes each string element. Anything not shaped like the
     // identifier array (for example the "/IDTree" name-tree key) is skipped.
-    static void ZeroFileId(byte[] data)
+    static void ZeroFileId(byte[] data, ChangeRecorder recorder)
     {
         var key = "/ID"u8;
         var pos = 0;
@@ -159,7 +195,11 @@ public static partial class PdfNormalizer
                 {
                     var start = i + 1;
                     i = FindByte(data, start, (byte) '>');
-                    Overwrite(data, start, i, Fill.Hex);
+                    if (Overwrite(data, start, i, Fill.Hex))
+                    {
+                        recorder.Record(key);
+                    }
+
                     if (i < data.Length)
                     {
                         i++;
@@ -169,7 +209,11 @@ public static partial class PdfNormalizer
                 {
                     var start = i + 1;
                     i = FindLiteralEnd(data, start);
-                    Overwrite(data, start, i, Fill.All);
+                    if (Overwrite(data, start, i, Fill.All))
+                    {
+                        recorder.Record(key);
+                    }
+
                     if (i < data.Length)
                     {
                         i++;
@@ -186,7 +230,7 @@ public static partial class PdfNormalizer
     }
 
     // Finds an XMP element by its opening tag and zeroes the text content up to the next '<'.
-    static void ZeroXmpElement(byte[] data, ReadOnlySpan<byte> openTag, Fill fill)
+    static void ZeroXmpElement(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder)
     {
         var pos = 0;
         while (true)
@@ -198,7 +242,12 @@ public static partial class PdfNormalizer
             }
 
             var end = FindByte(data, start, (byte) '<');
-            Overwrite(data, start, end, fill);
+            if (Overwrite(data, start, end, fill))
+            {
+                // Past the '<', so the report names the element rather than its opening tag.
+                recorder.Record(openTag[1..]);
+            }
+
             pos = end;
         }
     }
@@ -207,7 +256,7 @@ public static partial class PdfNormalizer
     // node up to the matching close tag. XMP array properties (for example dc:date, a "seq Date")
     // wrap their value in an rdf:Seq/rdf:li list, so the volatile value is not direct text content of
     // the named element and ZeroXmpElement alone would step over it.
-    static void ZeroXmpElementTree(byte[] data, ReadOnlySpan<byte> openTag, ReadOnlySpan<byte> closeTag, Fill fill)
+    static void ZeroXmpElementTree(byte[] data, ReadOnlySpan<byte> openTag, ReadOnlySpan<byte> closeTag, Fill fill, ChangeRecorder recorder)
     {
         var pos = 0;
         while (true)
@@ -241,7 +290,11 @@ public static partial class PdfNormalizer
                 }
 
                 var textEnd = FindByte(data, i, (byte) '<');
-                Overwrite(data, i, textEnd, fill);
+                if (Overwrite(data, i, textEnd, fill))
+                {
+                    recorder.Record(openTag[1..]);
+                }
+
                 i = textEnd;
             }
 
@@ -301,8 +354,12 @@ public static partial class PdfNormalizer
         }
     }
 
-    static void Overwrite(byte[] data, int start, int end, Fill fill)
+    // Returns whether any byte actually differed. The report is built from that rather than from the
+    // pass having run: writing '0' over a '0' leaves the document alone, and a second normalization
+    // of the same document must report nothing.
+    static bool Overwrite(byte[] data, int start, int end, Fill fill)
     {
+        var changed = false;
         for (var i = start; i < end; i++)
         {
             var c = data[i];
@@ -312,11 +369,15 @@ public static partial class PdfNormalizer
                 Fill.Hex => IsHexDigit(c),
                 _ => !IsWhitespace(c)
             };
-            if (replace)
+            if (replace &&
+                c != (byte) '0')
             {
                 data[i] = (byte) '0';
+                changed = true;
             }
         }
+
+        return changed;
     }
 
     // Returns the index of the ')' that closes the literal string starting at 'start', honoring
