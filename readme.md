@@ -23,6 +23,9 @@ A PDF records when it was produced and stamps every render with fresh identifier
  * The XMP metadata dates `xmp:CreateDate`, `xmp:ModifyDate`, and `xmp:MetadataDate`
  * The Dublin Core `dc:date`, whether written as direct text content or nested in an `rdf:Seq`/`rdf:li` array
  * The XMP per-generation identifiers `xmpMM:DocumentID`, `xmpMM:InstanceID`, and `xmpMM:OriginalDocumentID`
+ * The volatile fields of the structs those identifiers are referenced from — `stEvt:when` and `stEvt:instanceID` in an `xmpMM:History` save event, and `stRef:instanceID`, `stRef:documentID`, `stRef:originalDocumentID`, and `stRef:lastModifyDate` in an `xmpMM:DerivedFrom` reference. A producer that records a save event stamps a fresh `stEvt:when` onto the history on every render. Fields that describe *what* happened rather than *when* (`stEvt:action`, `stEvt:softwareAgent`) are left alone.
+
+Every XMP property above is handled in both RDF serializations: as an element of its own (`<xmp:CreateDate>2024-01-15T09:30:00Z</xmp:CreateDate>`, which Apache FOP writes) and in the compact form that carries it as an attribute of the enclosing `rdf:Description` or `rdf:li` (`xmp:CreateDate="2024-01-15T09:30:00Z"`, which iText writes). `dc:date` is the one exception: an ordered array cannot be serialized as an attribute at all.
 
 Neutralizing replaces the mutable characters of each value with `0` rather than removing it. Dates keep their separators (`D:00000000000000Z`) so the result stays readable and, more importantly, stays the same length: every cross-reference offset in the document remains valid.
 
@@ -97,7 +100,7 @@ using var asyncTarget = await PdfNormalizer.NormalizeAsync(asyncSource);
 
 ### Reporting what changed
 
-An overload reports what was neutralized, named as it appears in the document: a key such as `/CreationDate` or `/ID`, an XMP element such as `xmp:CreateDate`, or `XMP packet whitespace` for the canonicalization pass.
+An overload reports what was neutralized, named as it appears in the document: a key such as `/CreationDate` or `/ID`, an XMP property such as `xmp:CreateDate` (under the same name whichever serialization the producer used), or `XMP packet whitespace` for the canonicalization pass.
 
 <!-- snippet: NormalizeReport -->
 <a id='snippet-NormalizeReport'></a>
