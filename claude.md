@@ -23,6 +23,29 @@ Two places record the same volatile information, and both must be handled:
      `rdf:Seq`/`rdf:li`, not direct text content. This is why `ZeroXmpElementTree` exists alongside
      `ZeroXmpElement`; the latter alone steps straight over it.
    - `xmpMM:DocumentID`, `xmpMM:InstanceID`, `xmpMM:OriginalDocumentID`
+   - `stEvt:when`, `stEvt:instanceID` — the volatile fields of a `ResourceEvent`, one per entry in the
+     `xmpMM:History` array. A producer that records a save event appends one with a fresh timestamp on
+     every render. The siblings that say *what* happened rather than *when* (`stEvt:action`,
+     `stEvt:softwareAgent`) are deliberately left alone.
+   - `stRef:instanceID`, `stRef:documentID`, `stRef:originalDocumentID`, `stRef:lastModifyDate` — the
+     same idea for the `ResourceRef` of `xmpMM:DerivedFrom`.
+
+   All of these except `dc:date` have a *second* serialization. The compact RDF form carries a simple
+   property as an attribute of the enclosing `rdf:Description` or `rdf:li`
+   (`xmp:CreateDate="2024-01-15T09:30:00Z"`) rather than as an element, and that is what iText emits.
+   `ZeroXmpElement` matches on `<` followed by the name, so it never sees that form — hence
+   `ZeroXmpAttribute`, which requires the name to be preceded by whitespace (XML demands it before an
+   attribute name, and it is also what rejects the element form and a longer name ending with this
+   one) and followed by `=`. `dc:date` has no attribute pass because an ordered array cannot be
+   written that way — it is the only XMP pass that is not a `ZeroXmpProperty`.
+
+   `ZeroXmpProperty` is the pairing of the two: every property is declared once, with its `<openTag`,
+   and the attribute name is derived as `openTag[1..]` so the two forms cannot drift apart. A document
+   uses one serialization or the other, so at most one half of each pair finds anything, and both
+   report under the same name.
+
+   `CollapseInterTagWhitespace` only drops whitespace runs that sit between `>` and `<`, so the
+   newlines *inside* a multi-attribute `rdf:Description` tag survive canonicalization untouched.
 
 Plus the trailer file identifier `/ID [<...> <...>]`.
 
@@ -124,6 +147,12 @@ There is deliberately no async reporting overload; the reason is on the comment 
   - `sample-fop.pdf` — an uncompressed FOP-style XMP packet with `dc:date` in `rdf:Seq`/`rdf:li`
   - `sample-fop-compact.pdf` / `sample-fop-indented.pdf` — the same document as serialized by two
     different JREs; they must normalize to identical bytes
+  - `sample-xmp-attributes.pdf` — a hand-built one-page document whose XMP packet uses the compact
+    RDF serialization: every property is an attribute of `rdf:Description`, as iText writes it.
+    Unlike the others it does not come from Verify.DocNet. It is deliberately *not* named
+    "compact" — `sample-fop-compact.pdf` is named for its packet indentation, which is a different
+    axis entirely. The packet is indented and padded, so the document also exercises canonicalization
+    and the xref repair on top of the attribute passes.
 
 ## Project structure
 

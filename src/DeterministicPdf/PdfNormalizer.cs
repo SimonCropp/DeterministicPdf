@@ -90,19 +90,31 @@ public static partial class PdfNormalizer
         ZeroFileId(data, recorder);
 
         // XMP metadata dates (uncompressed metadata streams only).
-        ZeroXmpElement(data, "<xmp:CreateDate"u8, Fill.Digits, recorder);
-        ZeroXmpElement(data, "<xmp:ModifyDate"u8, Fill.Digits, recorder);
-        ZeroXmpElement(data, "<xmp:MetadataDate"u8, Fill.Digits, recorder);
+        ZeroXmpProperty(data, "<xmp:CreateDate"u8, Fill.Digits, recorder);
+        ZeroXmpProperty(data, "<xmp:ModifyDate"u8, Fill.Digits, recorder);
+        ZeroXmpProperty(data, "<xmp:MetadataDate"u8, Fill.Digits, recorder);
 
         // Dublin Core date. Unlike the xmp:* dates above it is an ordered array (seq Date), so the
         // value is nested inside rdf:Seq/rdf:li rather than being direct text content of the element
-        // (this is what Apache FOP emits).
+        // (this is what Apache FOP emits). An array is also the one shape that has no attribute form,
+        // which is why this is the only XMP pass with no ZeroXmpProperty counterpart.
         ZeroXmpElementTree(data, "<dc:date"u8, "</dc:date>"u8, Fill.Digits, recorder);
 
         // XMP per-generation identifiers.
-        ZeroXmpElement(data, "<xmpMM:DocumentID"u8, Fill.All, recorder);
-        ZeroXmpElement(data, "<xmpMM:InstanceID"u8, Fill.All, recorder);
-        ZeroXmpElement(data, "<xmpMM:OriginalDocumentID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<xmpMM:DocumentID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<xmpMM:InstanceID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<xmpMM:OriginalDocumentID"u8, Fill.All, recorder);
+
+        // The volatile fields of the structs the identifiers above are referenced from: the
+        // ResourceEvent (stEvt) entries of xmpMM:History and the ResourceRef (stRef) of
+        // xmpMM:DerivedFrom. A producer that appends a save event to the history stamps a fresh
+        // stEvt:when and stEvt:instanceID onto it on every render.
+        ZeroXmpProperty(data, "<stEvt:when"u8, Fill.Digits, recorder);
+        ZeroXmpProperty(data, "<stEvt:instanceID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<stRef:instanceID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<stRef:documentID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<stRef:originalDocumentID"u8, Fill.All, recorder);
+        ZeroXmpProperty(data, "<stRef:lastModifyDate"u8, Fill.Digits, recorder);
 
         // Collapse the JRE-dependent XMP packet whitespace and repair the cross-reference table so the
         // output is byte-identical across platforms. This can shrink the buffer, so the result of the
@@ -230,6 +242,17 @@ public static partial class PdfNormalizer
         }
     }
 
+    // Zeroes an XMP property in both of the RDF serializations a producer may have used: as an element
+    // of its own, and in the compact form that carries it as an attribute of the enclosing
+    // rdf:Description or rdf:li. A document uses one or the other, so at most one of the two finds
+    // anything, and both report under the same name: the report names the property, not the shape the
+    // producer happened to write it in.
+    static void ZeroXmpProperty(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder)
+    {
+        ZeroXmpElement(data, openTag, fill, recorder);
+        ZeroXmpAttribute(data, openTag[1..], fill, recorder);
+    }
+
     // Finds an XMP element by its opening tag and zeroes the text content up to the next '<'.
     static void ZeroXmpElement(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder)
     {
@@ -352,6 +375,69 @@ public static partial class PdfNormalizer
             }
 
             return i;
+        }
+    }
+
+    // Finds an XMP property written as an attribute rather than an element and zeroes the quoted
+    // value. The compact RDF serialization carries a simple property as an attribute of
+    // rdf:Description (xmp:CreateDate="2024-01-15T09:30:00Z") rather than as an element, and
+    // ZeroXmpElement, which matches on a '<' followed by the name, steps straight over that.
+    static void ZeroXmpAttribute(byte[] data, ReadOnlySpan<byte> name, Fill fill, ChangeRecorder recorder)
+    {
+        var pos = 0;
+        while (true)
+        {
+            var hit = data.AsSpan(pos).IndexOf(name);
+            if (hit < 0)
+            {
+                return;
+            }
+
+            var nameStart = pos + hit;
+            var i = nameStart + name.Length;
+            pos = i;
+
+            // XML requires whitespace before an attribute name, so anything else preceding it is a
+            // different construct: the element form "<xmp:CreateDate", its closing tag, or a longer
+            // name that merely ends with this one.
+            if (nameStart == 0 ||
+                !IsWhitespace(data[nameStart - 1]))
+            {
+                continue;
+            }
+
+            // Whitespace is permitted either side of the '='. Requiring that '=' is also what rejects
+            // a longer name merely starting with this one, whose next byte is a name character.
+            i = SkipWhitespace(data, i);
+            if (i >= data.Length ||
+                data[i] != (byte) '=')
+            {
+                continue;
+            }
+
+            i = SkipWhitespace(data, i + 1);
+            if (i >= data.Length)
+            {
+                return;
+            }
+
+            // Either quote character may delimit an attribute value, and the value cannot contain the
+            // one that opened it, so the next occurrence closes it.
+            var quote = data[i];
+            if (quote != (byte) '"' &&
+                quote != (byte) '\'')
+            {
+                continue;
+            }
+
+            var start = i + 1;
+            var end = FindByte(data, start, quote);
+            if (Overwrite(data, start, end, fill))
+            {
+                recorder.Record(name);
+            }
+
+            pos = end;
         }
     }
 

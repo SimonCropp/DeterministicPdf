@@ -93,6 +93,44 @@ public class NormalizeReportTests
         await Assert.That(changes.Select(_ => _.Name)).Contains("dc:date");
     }
 
+    // The compact serialization is reported under the same names as the element form: the report
+    // names the property, not the shape the producer happened to write it in.
+    [Test]
+    public async Task ReportsXmpAttributesUnderThePropertyName()
+    {
+        var changes = Report(
+            "<rdf:Description xmp:CreateDate=\"2024-01-15T09:30:00Z\" xmpMM:DocumentID=\"uuid:0f7b2c9a\"/>");
+
+        await Assert.That(changes.Select(_ => _.Name))
+            .IsEquivalentTo(["xmp:CreateDate", "xmpMM:DocumentID"]);
+    }
+
+    // A struct field is reported under its own name, so the report distinguishes "the document's own
+    // modify date changed" from "a save event was appended to its history".
+    [Test]
+    public async Task ReportsResourceEventAndResourceRefFields()
+    {
+        var changes = Report(
+            "<rdf:li stEvt:when=\"2026-09-17T17:21:19Z\" stEvt:instanceID=\"xmp.iid:b0505ebe\"/>" +
+            "<rdf:Description stRef:documentID=\"xmp.did:341e36e7\"/>");
+
+        await Assert.That(changes.Select(_ => _.Name))
+            .IsEquivalentTo(["stEvt:when", "stEvt:instanceID", "stRef:documentID"]);
+    }
+
+    [Test]
+    public async Task ReportsTheXmpAttributeSample()
+    {
+        var data = await File.ReadAllBytesAsync("sample-xmp-attributes.pdf");
+
+        PdfNormalizer.Normalize(data, out var changes);
+
+        var names = changes.Select(_ => _.Name).ToList();
+        await Assert.That(names).Contains("xmp:CreateDate");
+        await Assert.That(names).Contains("xmpMM:InstanceID");
+        await Assert.That(names).Contains("XMP packet whitespace");
+    }
+
     [Test]
     public async Task TheReportingOverloadProducesIdenticalBytes()
     {
