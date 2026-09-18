@@ -106,6 +106,118 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task NeutralizesXmpAttributes()
+    {
+        // The compact RDF serialization carries a simple property as an attribute of rdf:Description
+        // rather than giving it an element of its own. iText writes its XMP this way.
+        var input =
+            """
+            <rdf:Description rdf:about=""
+                xmp:CreateDate="2024-01-15T09:30:00+05:30"
+                xmp:ModifyDate="2024-01-15T09:30:00Z"
+                xmp:MetadataDate="2024-01-15T09:30:00Z"
+                xmpMM:DocumentID="uuid:0f7b2c9a-1234-5678-9abc-def012345678"
+                xmpMM:InstanceID="xmp.iid:1a2b3c4d"
+                xmpMM:OriginalDocumentID="uuid:9e8d7c6b-4321-8765-cba9-876543210fed"
+                pdf:Producer="iText"/>
+            """;
+        var expected =
+            $"""
+             <rdf:Description rdf:about=""
+                 xmp:CreateDate="0000-00-00T00:00:00+00:00"
+                 xmp:ModifyDate="0000-00-00T00:00:00Z"
+                 xmp:MetadataDate="0000-00-00T00:00:00Z"
+                 xmpMM:DocumentID="{new string('0', 41)}"
+                 xmpMM:InstanceID="{new string('0', 16)}"
+                 xmpMM:OriginalDocumentID="{new string('0', 41)}"
+                 pdf:Producer="iText"/>
+             """;
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesXmpAttributesWithEitherQuote()
+    {
+        // XML permits an attribute value in single quotes and whitespace either side of the '='.
+        var input =
+            "<rdf:Description xmp:CreateDate = '2024-01-15T09:30:00Z' xmp:ModifyDate='2024-01-15T09:30:00Z'/>";
+        var expected =
+            "<rdf:Description xmp:CreateDate = '0000-00-00T00:00:00Z' xmp:ModifyDate='0000-00-00T00:00:00Z'/>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task LeavesLookalikeXmpAttributesUntouched()
+    {
+        // A longer attribute name starting with a handled one, a name merely ending with one, and an
+        // unrelated attribute whose value contains digits: none is the property being neutralized.
+        var input =
+            """
+            <rdf:Description rdf:about=""
+                xmp:CreateDateStamp="2024-01-15"
+                xxxmp:ModifyDate="2024-01-15"
+                pdf:Keywords="2024 report"/>
+            """;
+        await Assert.That(Normalize(input)).IsEqualTo(input);
+    }
+
+    [Test]
+    public async Task NeutralizesResourceEventAndResourceRefFields()
+    {
+        // The stEvt fields of an xmpMM:History entry and the stRef fields of xmpMM:DerivedFrom. A
+        // producer that appends a save event stamps a fresh stEvt:when and stEvt:instanceID onto the
+        // history on every render. stEvt:action and stEvt:softwareAgent describe what happened rather
+        // than when, so they must survive.
+        var input =
+            """
+            <xmpMM:History>
+              <rdf:Seq>
+                <rdf:li stEvt:action="saved" stEvt:instanceID="xmp.iid:b0505ebe"
+                        stEvt:when="2026-09-17T17:21:19-06:00" stEvt:softwareAgent="iText 9.7.0"/>
+              </rdf:Seq>
+            </xmpMM:History>
+            <rdf:Description stRef:instanceID="uuid:0d946f79ab1"
+                stRef:documentID="xmp.did:341e36e7"
+                stRef:originalDocumentID="uuid:5D20892493B"
+                stRef:lastModifyDate="2026-09-17T17:21:19-06:00"/>
+            """;
+        var expected =
+            $"""
+             <xmpMM:History>
+               <rdf:Seq>
+                 <rdf:li stEvt:action="saved" stEvt:instanceID="{new string('0', 16)}"
+                         stEvt:when="0000-00-00T00:00:00-00:00" stEvt:softwareAgent="iText 9.7.0"/>
+               </rdf:Seq>
+             </xmpMM:History>
+             <rdf:Description stRef:instanceID="{new string('0', 16)}"
+                 stRef:documentID="{new string('0', 16)}"
+                 stRef:originalDocumentID="{new string('0', 16)}"
+                 stRef:lastModifyDate="0000-00-00T00:00:00-00:00"/>
+             """;
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesResourceEventFieldsInElementForm()
+    {
+        // The same struct fields written as child elements, which is what rdf:parseType="Resource"
+        // introduces. Every property is handled in both serializations, not just the xmp:* ones.
+        var input =
+            "<rdf:li rdf:parseType=\"Resource\">" +
+            "<stEvt:action>saved</stEvt:action>" +
+            "<stEvt:when>2026-09-17T17:21:19-06:00</stEvt:when>" +
+            "<stEvt:instanceID>xmp.iid:b0505ebe</stEvt:instanceID>" +
+            "</rdf:li>";
+        var expected =
+            "<rdf:li rdf:parseType=\"Resource\">" +
+            "<stEvt:action>saved</stEvt:action>" +
+            "<stEvt:when>0000-00-00T00:00:00-00:00</stEvt:when>" +
+            $"<stEvt:instanceID>{new string('0', 16)}</stEvt:instanceID>" +
+            "</rdf:li>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task CollapsesDifferingValuesToTheSameOutput()
     {
         // The same producer emits a stable structure across runs, so two documents differing only
@@ -160,6 +272,29 @@ public class PdfNormalizerTests
 
         using var reader = DocLib.Instance.GetDocReader(data, new(scalingFactor: 2));
         await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NeutralizesXmpAttributeSample()
+    {
+        // sample-xmp-attributes.pdf carries an uncompressed XMP packet in the compact serialization: every
+        // property is an attribute of rdf:Description, so none of the element passes sees it. The
+        // values must be neutralized, the packet canonicalized, and the document must still load.
+        var raw = await File.ReadAllBytesAsync("sample-xmp-attributes.pdf");
+        var data = PdfNormalizer.Normalize(raw);
+
+        var text = Encoding.Latin1.GetString(data);
+        await Assert.That(text).Contains("xmp:CreateDate=\"0000-00-00T00:00:00+00:00\"");
+        await Assert.That(text).Contains($"xmpMM:InstanceID=\"{new string('0', 41)}\"");
+        await Assert.That(text).DoesNotContain("2024-01-15");
+        await Assert.That(text).DoesNotContain("0f7b2c9a");
+
+        // Canonicalization shortened the packet, so this also proves the repaired cross-reference
+        // table still points at the right objects.
+        using var reader = DocLib.Instance.GetDocReader(data, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+
+        await Assert.That(PdfNormalizer.Normalize(data)).IsEquivalentTo(data);
     }
 
     [Test]
