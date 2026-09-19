@@ -29,11 +29,21 @@ Every XMP property above is handled in both RDF serializations: as an element of
 
 Neutralizing replaces the mutable characters of each value with `0` rather than removing it. Dates keep their separators (`D:00000000000000Z`) so the result stays readable and, more importantly, stays the same length: every cross-reference offset in the document remains valid.
 
+A date's UTC offset is made of separators, so it survives the zeroing and goes on recording where the render happened. It is neutralized in two steps, because it varies in two ways. The sign — `+00:00` on a build agent east of Greenwich, `-00:00` on a developer machine west of it — is the same length either way, so it is forced to `+`, the spelling ISO 8601 gives a zero offset. Only a sign that follows the time is treated as one: the `-` separating the year, month and day of an ISO 8601 date is left as it is.
+
+
+### Time zone designators of different lengths
+
+The offset also varies in *length*: a producer writes `Z` on a machine running in UTC and `+10:30` anywhere else, so the two renders are different-sized documents and no amount of zeroing can reconcile them. Every designator is therefore collapsed to `Z`.
+
+That shortens the document, so — exactly as for the XMP packet below — the metadata stream length, the cross-reference table offsets and `startxref` are repaired afterwards. A document that cannot be safely rewritten is left to the zeroing alone, which still forces the sign. A date inside a stream whose length this cannot restate is skipped rather than shortened out from under it.
+
 
 ## How it works
 
  * For an input document
  * Zero the volatile values in place, preserving the length of each
+ * Collapse every date's UTC offset to `Z`, and repair the offsets that shifted
  * Canonicalize the XMP metadata packet by collapsing inter-element whitespace
  * Repair the metadata stream `/Length`, the cross-reference table offsets, and `startxref` to match the new packet length
 

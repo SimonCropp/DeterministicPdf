@@ -38,6 +38,45 @@ public class NormalizeReportTests
         await Assert.That(changes.Single(_ => _.Name == "/ModDate").Count).IsEqualTo(2);
     }
 
+    // The sign of a time zone offset is a separator, so it outlives the digit zeroing. Two documents
+    // whose dates are otherwise already zeroed can still differ by it alone, and that has to be
+    // reported — it is exactly the kind of leftover the report exists to explain.
+    [Test]
+    public async Task ReportsASignOnlyChange()
+    {
+        var changes = Report(
+            "/ModDate(D:00000000000000-00'00') " +
+            "<xmp:CreateDate>0000-00-00T00:00:00-00:00</xmp:CreateDate>");
+
+        await Assert.That(changes.Select(_ => _.Name)).IsEquivalentTo(["/ModDate", "xmp:CreateDate"]);
+    }
+
+    // A date whose digits are already zeroed can still differ by the *length* of its UTC offset, which
+    // the collapse to "Z" is what fixes. That is a change like any other and has to be reported.
+    [Test]
+    public async Task ReportsACollapseOfTheTimeZoneAlone()
+    {
+        var data = DocumentBuilder.Build("D:00000000000000+00'00'", "0000-00-00T00:00:00+00:00");
+
+        PdfNormalizer.Normalize(data, out var changes);
+
+        await Assert.That(changes.Select(_ => _.Name)).Contains("/ModDate");
+        await Assert.That(changes.Single(_ => _.Name == "xmp:CreateDate").Count).IsEqualTo(1);
+    }
+
+    // The collapse revisits the very dates the zeroing already reported. Count is occurrences altered,
+    // not passes that touched them, so a date both passes changed still counts once.
+    [Test]
+    public async Task CountsADateZeroedAndCollapsedOnce()
+    {
+        var data = DocumentBuilder.Build("D:20240115093000+05'30'", "2024-01-15T09:30:00+05:30");
+
+        PdfNormalizer.Normalize(data, out var changes);
+
+        await Assert.That(changes.Single(_ => _.Name == "/ModDate").Count).IsEqualTo(1);
+        await Assert.That(changes.Single(_ => _.Name == "xmp:CreateDate").Count).IsEqualTo(1);
+    }
+
     [Test]
     public async Task ReportsNothingForContentWithNoVolatileValues() =>
         await Assert.That(Report("/Type /Page /Contents 4 0 R")).IsEmpty();
