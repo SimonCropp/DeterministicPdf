@@ -46,6 +46,53 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task CanonicalizesTimeZoneSign()
+    {
+        // The sign of the UTC offset is a separator, so zeroing the digits leaves it behind and it
+        // goes on recording which side of Greenwich the render happened on: a build agent running in
+        // UTC keeps "+00:00" where a developer machine west of it keeps "-00:00", which is the same
+        // zeroed instant spelled two ways.
+        //
+        // The offset itself survives here because collapsing it to "Z" shortens the content, and that
+        // only runs on a whole document whose cross-reference table can be repaired. This is the
+        // length-preserving half, which always applies.
+        var west =
+            "/ModDate(D:20240115093000-06'00') " +
+            "<xmp:ModifyDate>2024-01-15T09:30:00-06:00</xmp:ModifyDate>" +
+            "<rdf:Description xmp:MetadataDate=\"2024-01-15T09:30:00-06:00\"/>";
+        var east =
+            "/ModDate(D:20240115093000+05'30') " +
+            "<xmp:ModifyDate>2024-01-15T09:30:00+05:30</xmp:ModifyDate>" +
+            "<rdf:Description xmp:MetadataDate=\"2024-01-15T09:30:00+05:30\"/>";
+        var expected =
+            "/ModDate(D:00000000000000+00'00') " +
+            "<xmp:ModifyDate>0000-00-00T00:00:00+00:00</xmp:ModifyDate>" +
+            "<rdf:Description xmp:MetadataDate=\"0000-00-00T00:00:00+00:00\"/>";
+        await Assert.That(Normalize(west)).IsEqualTo(expected);
+        await Assert.That(Normalize(east)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task CanonicalizesTimeZoneSignAfterFractionalSeconds()
+    {
+        // XMP permits fractional seconds between the time and its offset.
+        var input = "<xmp:ModifyDate>2024-01-15T09:30:00.123-06:00</xmp:ModifyDate>";
+        var expected = "<xmp:ModifyDate>0000-00-00T00:00:00.000+00:00</xmp:ModifyDate>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task LeavesDateSeparatorsIntact()
+    {
+        // Only the sign of a time zone offset is forced to '+'. The '-' that separates the year,
+        // month and day of an ISO 8601 date is an ordinary separator, and a dc:date is allowed to
+        // carry no time at all — so there is no sign here to canonicalize.
+        var input = "<dc:date>2024-01-15</dc:date>";
+        var expected = "<dc:date>0000-00-00</dc:date>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task NeutralizesDublinCoreDate()
     {
         // Some producers (for example older Apache FOP) write the render time straight into the
@@ -186,13 +233,13 @@ public class PdfNormalizerTests
              <xmpMM:History>
                <rdf:Seq>
                  <rdf:li stEvt:action="saved" stEvt:instanceID="{new string('0', 16)}"
-                         stEvt:when="0000-00-00T00:00:00-00:00" stEvt:softwareAgent="iText 9.7.0"/>
+                         stEvt:when="0000-00-00T00:00:00+00:00" stEvt:softwareAgent="iText 9.7.0"/>
                </rdf:Seq>
              </xmpMM:History>
              <rdf:Description stRef:instanceID="{new string('0', 16)}"
                  stRef:documentID="{new string('0', 16)}"
                  stRef:originalDocumentID="{new string('0', 16)}"
-                 stRef:lastModifyDate="0000-00-00T00:00:00-00:00"/>
+                 stRef:lastModifyDate="0000-00-00T00:00:00+00:00"/>
              """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }
@@ -211,7 +258,7 @@ public class PdfNormalizerTests
         var expected =
             "<rdf:li rdf:parseType=\"Resource\">" +
             "<stEvt:action>saved</stEvt:action>" +
-            "<stEvt:when>0000-00-00T00:00:00-00:00</stEvt:when>" +
+            "<stEvt:when>0000-00-00T00:00:00+00:00</stEvt:when>" +
             $"<stEvt:instanceID>{new string('0', 16)}</stEvt:instanceID>" +
             "</rdf:li>";
         await Assert.That(Normalize(input)).IsEqualTo(expected);
@@ -267,7 +314,7 @@ public class PdfNormalizerTests
         data = PdfNormalizer.Normalize(data);
 
         var text = Encoding.Latin1.GetString(data);
-        await Assert.That(text).Contains("<rdf:li>0000-00-00T00:00:00+00:00</rdf:li>");
+        await Assert.That(text).Contains("<rdf:li>0000-00-00T00:00:00Z</rdf:li>");
         await Assert.That(text).DoesNotContain("2024-01-15");
 
         using var reader = DocLib.Instance.GetDocReader(data, new(scalingFactor: 2));
@@ -284,7 +331,7 @@ public class PdfNormalizerTests
         var data = PdfNormalizer.Normalize(raw);
 
         var text = Encoding.Latin1.GetString(data);
-        await Assert.That(text).Contains("xmp:CreateDate=\"0000-00-00T00:00:00+00:00\"");
+        await Assert.That(text).Contains("xmp:CreateDate=\"0000-00-00T00:00:00Z\"");
         await Assert.That(text).Contains($"xmpMM:InstanceID=\"{new string('0', 41)}\"");
         await Assert.That(text).DoesNotContain("2024-01-15");
         await Assert.That(text).DoesNotContain("0f7b2c9a");
@@ -314,6 +361,95 @@ public class PdfNormalizerTests
 
         using var reader = DocLib.Instance.GetDocReader(compact, new(scalingFactor: 2));
         await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CollapsesTimeZoneOffsetsAcrossMachines()
+    {
+        // The scenario zeroing cannot reach: a producer that spells the UTC offset "Z" on a machine
+        // running in UTC and "+05'30'" anywhere else writes dates of different *lengths*, so the two
+        // renders are different-sized documents however their digits are overwritten. Collapsing every
+        // offset to "Z" is what reconciles them, and because that shortens the document the
+        // cross-reference table has to be repaired behind it.
+        var utc = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z");
+        var local = DocumentBuilder.Build("D:20240115093000+05'30'", "2024-01-15T09:30:00+05:30");
+        await Assert.That(local.Length).IsNotEqualTo(utc.Length);
+
+        var fromUtc = PdfNormalizer.Normalize(utc);
+        var fromLocal = PdfNormalizer.Normalize(local);
+        await Assert.That(fromLocal).IsEquivalentTo(fromUtc);
+
+        // Both offsets are gone, not merely equal.
+        var text = Encoding.Latin1.GetString(fromLocal);
+        await Assert.That(text).Contains("/ModDate (D:00000000000000Z)");
+        await Assert.That(text).Contains("<xmp:ModifyDate>0000-00-00T00:00:00Z</xmp:ModifyDate>");
+
+        // The repaired table has to still point at the right objects, which is what loading proves.
+        using var reader = DocLib.Instance.GetDocReader(fromLocal, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task LeavesADateInsideAnotherStreamToTheInPlacePasses()
+    {
+        // Collapsing an offset shortens whatever holds the date, and the only stream length this pass
+        // restates is the metadata one. A date inside any other stream is therefore left to the
+        // length-preserving zeroing rather than shortened out from under a /Length it cannot fix.
+        var body = "/ModDate (D:20240115093000+05'30')\n";
+        var data = DocumentBuilder.Build(
+            "D:20240115093000+05'30'",
+            "2024-01-15T09:30:00+05:30",
+            $"<< /Length {body.Length} >>\nstream\n{body}endstream");
+
+        var normalized = PdfNormalizer.Normalize(data);
+        var text = Encoding.Latin1.GetString(normalized);
+
+        // The information dictionary date was collapsed; the one inside the stream was only zeroed, so
+        // the stream is still exactly as long as its /Length says.
+        await Assert.That(text).Contains("/ModDate (D:00000000000000Z)");
+        await Assert.That(text).Contains($"<< /Length {body.Length} >>\nstream\n/ModDate (D:00000000000000+00'00')\nendstream");
+
+        using var reader = DocLib.Instance.GetDocReader(normalized, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CollapsedTimeZoneOffsetsAreIdempotent()
+    {
+        // The second pass finds "Z" everywhere and so must not rewrite the document again - which also
+        // means it must not disturb the cross-reference table it repaired the first time.
+        var once = PdfNormalizer.Normalize(DocumentBuilder.Build("D:20240115093000+05'30'", "2024-01-15T09:30:00+05:30"));
+        await Assert.That(PdfNormalizer.Normalize(once)).IsEquivalentTo(once);
+    }
+
+    [Test]
+    public async Task CanonicalizesTimeZoneSignAcrossMachines()
+    {
+        // The document-level version of CanonicalizesTimeZoneSign: the same document rendered on a
+        // build agent east of Greenwich and on a developer machine west of it differs only in the
+        // sign of its UTC offsets, and the two must normalize to identical bytes. Flipping the sign
+        // is length-preserving, so the rewritten copy is a document the normalizer sees exactly as it
+        // would a real western render.
+        var east = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var west = WithNegativeOffsets(east);
+        await Assert.That(west.SequenceEqual(east)).IsFalse();
+
+        var normalized = PdfNormalizer.Normalize(west);
+        await Assert.That(normalized).IsEquivalentTo(PdfNormalizer.Normalize(east));
+
+        using var reader = DocLib.Instance.GetDocReader(normalized, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    // Rewrites the "+05'30'" / "+05:30" offsets of sample-fop.pdf to their western counterparts. Both
+    // replacements are the same length as what they replace, so every cross-reference offset in the
+    // document survives and the result is a document in its own right.
+    static byte[] WithNegativeOffsets(byte[] data)
+    {
+        var text = Encoding.Latin1.GetString(data)
+            .Replace("+05'30'", "-05'30'")
+            .Replace("+05:30", "-05:30");
+        return Encoding.Latin1.GetBytes(text);
     }
 
     [Test]

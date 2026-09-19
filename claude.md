@@ -65,6 +65,38 @@ This is also why look-alike keys have to be rejected explicitly — `/IDTree` is
 the file identifier, and `NextXmpElementContent` rejects both longer element names sharing a prefix
 and self-closing tags.
 
+### The time zone (two halves)
+
+Keeping separators has one sharp edge: the UTC offset is made *of* separators, so zeroing the digits
+leaves it behind, still recording where the render happened. It goes wrong in two different ways,
+which is why there are two passes.
+
+**The sign**, `+00:00` on a build agent east of Greenwich versus `-00:00` on a developer machine west
+of it. Same length, so `Fill.Digits` just forces the sign to `+` in place (which is how ISO 8601
+spells a zero offset; `-00:00` is not a legal spelling there at all). This half always applies.
+
+**The whole designator**, `Z` on a machine running in UTC versus `+10:30` anywhere else. Those are
+*different lengths*, so the two renders are different-sized documents and no length-preserving edit
+can ever reconcile them. `CanonicalizeDateZones` collapses every designator to `Z` — the shortest
+spelling, so an edit only ever shortens — and then repairs the cross-reference table the same way the
+packet rewrite does. It runs after the zeroing and before `CanonicalizeXmp`, so that pass sees a
+document whose offsets are already consistent.
+
+Both halves locate the designator through `TryFindTimeZone`, which looks for the `T` of an ISO 8601
+value or the `D:` prefix of a PDF date string before it starts scanning: the ISO 8601 date itself is
+`0000-00-00`, so a `-` cannot be told from a separator by shape alone, and `dc:date` is allowed to
+carry a date with no time (and hence no designator) at all. The forward scan stops at the first byte
+that cannot belong to a time, so it is never run past the end of one date into the next.
+
+`CanonicalizeDateZones` finds the dates through the `NeutralizedDate` list the zeroing passes fill in
+as they go, rather than walking the keys again — a second list of date keys is exactly the kind of
+thing that drifts. Each entry also carries whether the zeroing already reported that occurrence, so a
+date both passes changed is still counted once.
+
+A date inside stream data is a length it would have to restate. The metadata stream is the one it
+knows how to (that is where the XMP dates are), so an edit landing in any other stream is dropped and
+left to the in-place zeroing — see `FindStreamDataRegions` and `IsInsideOtherStream`.
+
 ### XMP whitespace canonicalization (the hard part)
 
 Apache FOP serializes the XMP packet through the platform's XML writer, so the JDK decides the
@@ -79,8 +111,9 @@ That **changes the packet length**, which invalidates offsets. So three things a
 2. Every in-use cross-reference table entry's fixed 10-digit offset field.
 3. The `startxref` value.
 
-`Shift(position)` maps an original byte position to its post-edit position; both the entry field and
-the object it points at are original positions run through the same map.
+`Shift(edits, position)` maps an original byte position to its post-edit position; both the entry
+field and the object it points at are original positions run through the same map. It is shared with
+`CanonicalizeDateZones`, which repairs the same three things for the same reason.
 
 Canonicalization **bails out and returns the input unchanged** for any shape it cannot safely
 rewrite: no packet, more than one packet, a cross-reference *stream* (rather than a table), an
@@ -153,6 +186,10 @@ There is deliberately no async reporting overload; the reason is on the comment 
     "compact" — `sample-fop-compact.pdf` is named for its packet indentation, which is a different
     axis entirely. The packet is indented and padded, so the document also exercises canonicalization
     and the xref repair on top of the attribute passes.
+- `DocumentBuilder` builds a complete one-page document — information dictionary, XMP metadata stream,
+  correct xref table — with the dates spelled however the caller asks. That is what makes the `Z`
+  versus `+05'30'` pair testable: the two renders are *different lengths*, so no fixture edited in
+  place could stand in for them.
 
 ## Project structure
 
