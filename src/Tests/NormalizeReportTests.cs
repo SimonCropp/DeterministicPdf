@@ -4,11 +4,13 @@ public class NormalizeReportTests
     public async Task NamesEachFieldItNeutralized()
     {
         var input =
-            "/ID [<A1B2C3D4E5F60718> <1122334455667788>] " +
-            "/CreationDate(D:20240115093000+05'30') " +
-            "/ModDate(D:20240115093000Z) " +
-            "<xmp:CreateDate>2024-01-15T09:30:00+05:30</xmp:CreateDate>" +
-            "<xmpMM:DocumentID>uuid:0f7b2c9a-1234-5678-9abc-def012345678</xmpMM:DocumentID>";
+            """
+            /ID [<A1B2C3D4E5F60718> <1122334455667788>]
+            /CreationDate(D:20240115093000+05'30')
+            /ModDate(D:20240115093000Z)
+            <xmp:CreateDate>2024-01-15T09:30:00+05:30</xmp:CreateDate>
+            <xmpMM:DocumentID>uuid:0f7b2c9a-1234-5678-9abc-def012345678</xmpMM:DocumentID>
+            """;
 
         var changes = Report(input);
 
@@ -30,9 +32,11 @@ public class NormalizeReportTests
     public async Task CountsEveryOccurrence()
     {
         var changes = Report(
-            "/ID [<A1B2C3D4E5F60718> <1122334455667788>] " +
-            "/ModDate(D:20240115093000Z) " +
-            "/ModDate(D:20250216104100Z)");
+            """
+            /ID [<A1B2C3D4E5F60718> <1122334455667788>]
+            /ModDate(D:20240115093000Z)
+            /ModDate(D:20250216104100Z)
+            """);
 
         await Assert.That(changes.Single(_ => _.Name == "/ID").Count).IsEqualTo(2);
         await Assert.That(changes.Single(_ => _.Name == "/ModDate").Count).IsEqualTo(2);
@@ -45,8 +49,10 @@ public class NormalizeReportTests
     public async Task ReportsASignOnlyChange()
     {
         var changes = Report(
-            "/ModDate(D:00000000000000-00'00') " +
-            "<xmp:CreateDate>0000-00-00T00:00:00-00:00</xmp:CreateDate>");
+            """
+            /ModDate(D:00000000000000-00'00')
+            <xmp:CreateDate>0000-00-00T00:00:00-00:00</xmp:CreateDate>
+            """);
 
         await Assert.That(changes.Select(_ => _.Name)).IsEquivalentTo(["/ModDate", "xmp:CreateDate"]);
     }
@@ -88,9 +94,11 @@ public class NormalizeReportTests
     public async Task ReportsNothingOnASecondNormalization()
     {
         var input =
-            "/ID [<A1B2C3D4E5F60718>] " +
-            "/CreationDate(D:20240115093000+05'30') " +
-            "<xmp:CreateDate>2024-01-15T09:30:00Z</xmp:CreateDate>";
+            """
+            /ID [<A1B2C3D4E5F60718>]
+            /CreationDate(D:20240115093000+05'30')
+            <xmp:CreateDate>2024-01-15T09:30:00Z</xmp:CreateDate>
+            """;
 
         var once = PdfNormalizer.Normalize(Encoding.Latin1.GetBytes(input));
 
@@ -138,7 +146,9 @@ public class NormalizeReportTests
     public async Task ReportsXmpAttributesUnderThePropertyName()
     {
         var changes = Report(
-            "<rdf:Description xmp:CreateDate=\"2024-01-15T09:30:00Z\" xmpMM:DocumentID=\"uuid:0f7b2c9a\"/>");
+            """
+            <rdf:Description xmp:CreateDate="2024-01-15T09:30:00Z" xmpMM:DocumentID="uuid:0f7b2c9a"/>
+            """);
 
         await Assert.That(changes.Select(_ => _.Name))
             .IsEquivalentTo(["xmp:CreateDate", "xmpMM:DocumentID"]);
@@ -150,8 +160,10 @@ public class NormalizeReportTests
     public async Task ReportsResourceEventAndResourceRefFields()
     {
         var changes = Report(
-            "<rdf:li stEvt:when=\"2026-09-17T17:21:19Z\" stEvt:instanceID=\"xmp.iid:b0505ebe\"/>" +
-            "<rdf:Description stRef:documentID=\"xmp.did:341e36e7\"/>");
+            """
+            <rdf:li stEvt:when="2026-09-17T17:21:19Z" stEvt:instanceID="xmp.iid:b0505ebe"/>
+            <rdf:Description stRef:documentID="xmp.did:341e36e7"/>
+            """);
 
         await Assert.That(changes.Select(_ => _.Name))
             .IsEquivalentTo(["stEvt:when", "stEvt:instanceID", "stRef:documentID"]);

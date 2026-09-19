@@ -10,17 +10,23 @@ static class DocumentBuilder
 {
     public static byte[] Build(string pdfDate, string xmpDate, string? extraObject = null)
     {
+        // The packet is written with a line per element, as a real producer serializing through an XML
+        // writer emits it. Canonicalization collapses that inter-tag whitespace back out, so the
+        // normalized document is the same either way - the indentation only means these fixtures also
+        // carry the packet rewrite and the cross-reference repair behind it.
         var packet =
-            "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>" +
-            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">" +
-            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
-            "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">" +
-            $"<xmp:CreateDate>{xmpDate}</xmp:CreateDate>" +
-            $"<xmp:ModifyDate>{xmpDate}</xmp:ModifyDate>" +
-            "</rdf:Description>" +
-            "</rdf:RDF>" +
-            "</x:xmpmeta>" +
-            "<?xpacket end=\"w\"?>";
+            $"""
+             <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+             <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+             <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+             <xmp:CreateDate>{xmpDate}</xmp:CreateDate>
+             <xmp:ModifyDate>{xmpDate}</xmp:ModifyDate>
+             </rdf:Description>
+             </rdf:RDF>
+             </x:xmpmeta>
+             <?xpacket end="w"?>
+             """;
 
         // Apache FOP counts the end-of-line after the packet in the stream length, so the sample does
         // too: it is what makes the metadata /Length worth repairing.
@@ -32,7 +38,11 @@ static class DocumentBuilder
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
             $"<< /Producer (Test) /CreationDate ({pdfDate}) /ModDate ({pdfDate}) >>",
-            $"<< /Type /Metadata /Subtype /XML /Length {content.Length} >>\nstream\n{content}endstream"
+            $"""
+             << /Type /Metadata /Subtype /XML /Length {content.Length} >>
+             stream
+             {content}endstream
+             """
         ];
 
         if (extraObject != null)
@@ -56,10 +66,17 @@ static class DocumentBuilder
             builder.Append($"{offset:D10} 00000 n \n");
         }
 
+        // The blank line before the closing delimiter is the trailing end-of-line after %%EOF: a raw
+        // string drops the newline that precedes its closing delimiter.
         builder.Append(
-            $"trailer\n<< /Size {objects.Count + 1} /Root 1 0 R /Info 4 0 R " +
-            "/ID [<A1B2C3D4E5F60718> <1122334455667788>] >>\n" +
-            $"startxref\n{xref}\n%%EOF\n");
+            $"""
+             trailer
+             << /Size {objects.Count + 1} /Root 1 0 R /Info 4 0 R /ID [<A1B2C3D4E5F60718> <1122334455667788>] >>
+             startxref
+             {xref}
+             %%EOF
+
+             """);
 
         // Every character written above is ASCII, so the lengths the offsets were taken from are byte
         // counts and the table is correct as built.

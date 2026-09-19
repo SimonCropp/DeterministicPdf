@@ -1,5 +1,3 @@
-namespace DeterministicPdf;
-
 // Accumulates what the passes actually altered, in the order they run.
 //
 // A pass records only when Overwrite reports that bytes really differed, never merely because the

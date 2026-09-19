@@ -4,23 +4,27 @@ public class PdfNormalizerTests
     public async Task NeutralizesVolatileValues()
     {
         var input =
-            "/ID [<A1B2C3D4E5F60718> <1122334455667788>] " +
-            "/CreationDate(D:20240115093000+05'30') " +
-            "/ModDate(D:20240115093000Z) " +
-            "<xmp:CreateDate>2024-01-15T09:30:00+05:30</xmp:CreateDate>" +
-            "<xmp:ModifyDate>2024-01-15T09:30:00Z</xmp:ModifyDate>" +
-            "<xmp:MetadataDate>2024-01-15T09:30:00Z</xmp:MetadataDate>" +
-            "<xmpMM:DocumentID>uuid:0f7b2c9a-1234-5678-9abc-def012345678</xmpMM:DocumentID>" +
-            "<xmpMM:InstanceID>xmp.iid:1a2b3c4d</xmpMM:InstanceID>";
+            """
+            /ID [<A1B2C3D4E5F60718> <1122334455667788>]
+            /CreationDate(D:20240115093000+05'30')
+            /ModDate(D:20240115093000Z)
+            <xmp:CreateDate>2024-01-15T09:30:00+05:30</xmp:CreateDate>
+            <xmp:ModifyDate>2024-01-15T09:30:00Z</xmp:ModifyDate>
+            <xmp:MetadataDate>2024-01-15T09:30:00Z</xmp:MetadataDate>
+            <xmpMM:DocumentID>uuid:0f7b2c9a-1234-5678-9abc-def012345678</xmpMM:DocumentID>
+            <xmpMM:InstanceID>xmp.iid:1a2b3c4d</xmpMM:InstanceID>
+            """;
         var expected =
-            "/ID [<0000000000000000> <0000000000000000>] " +
-            "/CreationDate(D:00000000000000+00'00') " +
-            "/ModDate(D:00000000000000Z) " +
-            "<xmp:CreateDate>0000-00-00T00:00:00+00:00</xmp:CreateDate>" +
-            "<xmp:ModifyDate>0000-00-00T00:00:00Z</xmp:ModifyDate>" +
-            "<xmp:MetadataDate>0000-00-00T00:00:00Z</xmp:MetadataDate>" +
-            $"<xmpMM:DocumentID>{new string('0', 41)}</xmpMM:DocumentID>" +
-            $"<xmpMM:InstanceID>{new string('0', 16)}</xmpMM:InstanceID>";
+            $"""
+             /ID [<0000000000000000> <0000000000000000>]
+             /CreationDate(D:00000000000000+00'00')
+             /ModDate(D:00000000000000Z)
+             <xmp:CreateDate>0000-00-00T00:00:00+00:00</xmp:CreateDate>
+             <xmp:ModifyDate>0000-00-00T00:00:00Z</xmp:ModifyDate>
+             <xmp:MetadataDate>0000-00-00T00:00:00Z</xmp:MetadataDate>
+             <xmpMM:DocumentID>{new('0', 41)}</xmpMM:DocumentID>
+             <xmpMM:InstanceID>{new('0', 16)}</xmpMM:InstanceID>
+             """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }
 
@@ -144,11 +148,15 @@ public class PdfNormalizerTests
         // The rdf:li descent is scoped to dc:date, so digits in a sibling array (here dc:subject)
         // must survive.
         var input =
-            "<dc:subject><rdf:Bag><rdf:li>topic 2024</rdf:li></rdf:Bag></dc:subject>" +
-            "<dc:date><rdf:Seq><rdf:li>2024-01-15T09:30:00Z</rdf:li></rdf:Seq></dc:date>";
+            """
+            <dc:subject><rdf:Bag><rdf:li>topic 2024</rdf:li></rdf:Bag></dc:subject>
+            <dc:date><rdf:Seq><rdf:li>2024-01-15T09:30:00Z</rdf:li></rdf:Seq></dc:date>
+            """;
         var expected =
-            "<dc:subject><rdf:Bag><rdf:li>topic 2024</rdf:li></rdf:Bag></dc:subject>" +
-            "<dc:date><rdf:Seq><rdf:li>0000-00-00T00:00:00Z</rdf:li></rdf:Seq></dc:date>";
+            """
+            <dc:subject><rdf:Bag><rdf:li>topic 2024</rdf:li></rdf:Bag></dc:subject>
+            <dc:date><rdf:Seq><rdf:li>0000-00-00T00:00:00Z</rdf:li></rdf:Seq></dc:date>
+            """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }
 
@@ -174,9 +182,9 @@ public class PdfNormalizerTests
                  xmp:CreateDate="0000-00-00T00:00:00+00:00"
                  xmp:ModifyDate="0000-00-00T00:00:00Z"
                  xmp:MetadataDate="0000-00-00T00:00:00Z"
-                 xmpMM:DocumentID="{new string('0', 41)}"
-                 xmpMM:InstanceID="{new string('0', 16)}"
-                 xmpMM:OriginalDocumentID="{new string('0', 41)}"
+                 xmpMM:DocumentID="{new('0', 41)}"
+                 xmpMM:InstanceID="{new('0', 16)}"
+                 xmpMM:OriginalDocumentID="{new('0', 41)}"
                  pdf:Producer="iText"/>
              """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
@@ -232,13 +240,13 @@ public class PdfNormalizerTests
             $"""
              <xmpMM:History>
                <rdf:Seq>
-                 <rdf:li stEvt:action="saved" stEvt:instanceID="{new string('0', 16)}"
+                 <rdf:li stEvt:action="saved" stEvt:instanceID="{new('0', 16)}"
                          stEvt:when="0000-00-00T00:00:00+00:00" stEvt:softwareAgent="iText 9.7.0"/>
                </rdf:Seq>
              </xmpMM:History>
-             <rdf:Description stRef:instanceID="{new string('0', 16)}"
-                 stRef:documentID="{new string('0', 16)}"
-                 stRef:originalDocumentID="{new string('0', 16)}"
+             <rdf:Description stRef:instanceID="{new('0', 16)}"
+                 stRef:documentID="{new('0', 16)}"
+                 stRef:originalDocumentID="{new('0', 16)}"
                  stRef:lastModifyDate="0000-00-00T00:00:00+00:00"/>
              """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
@@ -250,17 +258,21 @@ public class PdfNormalizerTests
         // The same struct fields written as child elements, which is what rdf:parseType="Resource"
         // introduces. Every property is handled in both serializations, not just the xmp:* ones.
         var input =
-            "<rdf:li rdf:parseType=\"Resource\">" +
-            "<stEvt:action>saved</stEvt:action>" +
-            "<stEvt:when>2026-09-17T17:21:19-06:00</stEvt:when>" +
-            "<stEvt:instanceID>xmp.iid:b0505ebe</stEvt:instanceID>" +
-            "</rdf:li>";
+            """
+            <rdf:li rdf:parseType="Resource">
+              <stEvt:action>saved</stEvt:action>
+              <stEvt:when>2026-09-17T17:21:19-06:00</stEvt:when>
+              <stEvt:instanceID>xmp.iid:b0505ebe</stEvt:instanceID>
+            </rdf:li>
+            """;
         var expected =
-            "<rdf:li rdf:parseType=\"Resource\">" +
-            "<stEvt:action>saved</stEvt:action>" +
-            "<stEvt:when>0000-00-00T00:00:00+00:00</stEvt:when>" +
-            $"<stEvt:instanceID>{new string('0', 16)}</stEvt:instanceID>" +
-            "</rdf:li>";
+            $"""
+             <rdf:li rdf:parseType="Resource">
+               <stEvt:action>saved</stEvt:action>
+               <stEvt:when>0000-00-00T00:00:00+00:00</stEvt:when>
+               <stEvt:instanceID>{new('0', 16)}</stEvt:instanceID>
+             </rdf:li>
+             """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }
 
