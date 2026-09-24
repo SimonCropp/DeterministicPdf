@@ -1,6 +1,6 @@
 # <img src="/src/icon.png" height="30px"> DeterministicPdf
 
-[![Build status](https://img.shields.io/appveyor/build/SimonCropp/deterministicpdf)](https://ci.appveyor.com/project/SimonCropp/deterministicpdf)
+[![Build status](https://github.com/SimonCropp/DeterministicPdf/actions/workflows/build.yml/badge.svg)](https://github.com/SimonCropp/DeterministicPdf/actions/workflows/build.yml)
 [![NuGet Status](https://img.shields.io/nuget/v/DeterministicPdf.svg)](https://www.nuget.org/packages/DeterministicPdf/)
 
 Modify PDF files to ensure they are deterministic. Helpful for testing, build reproducibility, security verification, and ensuring output integrity across different build environments.
