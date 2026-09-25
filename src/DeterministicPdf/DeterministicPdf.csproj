@@ -6,7 +6,7 @@
   <ItemGroup>
     <PackageReference Include="Polyfill" PrivateAssets="all" />
     <PackageReference Include="ProjectDefaults" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Sbom.Targets" PrivateAssets="all" Condition="'$(CI)' == 'true'" />
+    <PackageReference Include="Sbom" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0' OR '$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net48'">
     <PackageReference Include="System.Threading.Tasks.Extensions" />
