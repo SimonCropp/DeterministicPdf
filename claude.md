@@ -55,6 +55,21 @@ onto the form XObject it uses for a watermark:
 `/PieceInfo<</PDFTRON<</LastModified(D:20260729134217Z)/Private/Watermark>>>>`. Note the value can
 follow the key with no separating whitespace.
 
+### Font subset tags
+
+A font embedded as a subset has its name prefixed with a six uppercase letter tag and a `+`
+(`/BaseFont /IIJUVL+OpenSans`). The tag is what tells two subsets of one font apart, and Aspose.PDF
+picks it at random on every save (for example for the font of the evaluation watermark it draws when
+no license is applied). The same tag appears after `/BaseFont` in a Type0 font and its descendant
+CIDFont, and after `/FontName` in the font descriptor.
+
+`CanonicalizeSubsetTags` is not a zeroing pass — zeroing would give every subset the same name — but
+it is length-preserving in the same way. It collects the tags after both keys, sorts them by offset,
+and assigns `AAAAAA`, `AAAAAB`, ... in order of first appearance, keyed on the original tag so every
+occurrence of one tag gets the same replacement. An already normalized document maps each tag onto
+itself, so a second pass changes and reports nothing. It reports under the key the tag followed
+(`/BaseFont`, `/FontName`).
+
 ### Why values are zeroed rather than removed
 
 Zeroing is **length-preserving**, so every offset in the cross-reference table stays valid and no
@@ -129,6 +144,9 @@ untouched.
   does not appear literally in the bytes, so it is left as-is.
 - **Encrypted documents.** Encrypted PDFs seed the encryption key from the trailer `/ID`; zeroing it
   would leave the document undecryptable.
+- **Subset tags outside a font name.** Only the tag after `/BaseFont` or `/FontName` is replaced. A
+  copy inside an uncompressed embedded font program, or a `+` written as the name escape `#2B`, is
+  left as-is.
 
 ## API shape
 

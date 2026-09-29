@@ -24,6 +24,7 @@ A PDF records when it was produced and stamps every render with fresh identifier
  * The Dublin Core `dc:date`, whether written as direct text content or nested in an `rdf:Seq`/`rdf:li` array
  * The XMP per-generation identifiers `xmpMM:DocumentID`, `xmpMM:InstanceID`, and `xmpMM:OriginalDocumentID`
  * The volatile fields of the structs those identifiers are referenced from — `stEvt:when` and `stEvt:instanceID` in an `xmpMM:History` save event, and `stRef:instanceID`, `stRef:documentID`, `stRef:originalDocumentID`, and `stRef:lastModifyDate` in an `xmpMM:DerivedFrom` reference. A producer that records a save event stamps a fresh `stEvt:when` onto the history on every render. Fields that describe *what* happened rather than *when* (`stEvt:action`, `stEvt:softwareAgent`) are left alone.
+ * The six letter tag that prefixes the name of a subset font (`/BaseFont /IIJUVL+OpenSans`, repeated as the `/FontName` of its descriptor). A producer that embeds only the glyphs a document uses picks this tag, and some (Aspose.PDF among them) pick it at random on every save. Each distinct tag is replaced, in order of first appearance, with `AAAAAA`, `AAAAAB`, and so on, so two subsets of one font stay distinct and the length is unchanged.
 
 Every XMP property above is handled in both RDF serializations: as an element of its own (`<xmp:CreateDate>2024-01-15T09:30:00Z</xmp:CreateDate>`, which Apache FOP writes) and in the compact form that carries it as an attribute of the enclosing `rdf:Description` or `rdf:li` (`xmp:CreateDate="2024-01-15T09:30:00Z"`, which iText writes). `dc:date` is the one exception: an ordered array cannot be serialized as an attribute at all.
 
@@ -43,6 +44,7 @@ That shortens the document, so — exactly as for the XMP packet below — the m
 
  * For an input document
  * Zero the volatile values in place, preserving the length of each
+ * Replace the tags of subset font names with canonical ones, also in place
  * Collapse every date's UTC offset to `Z`, and repair the offsets that shifted
  * Canonicalize the XMP metadata packet by collapsing inter-element whitespace
  * Repair the metadata stream `/Length`, the cross-reference table offsets, and `startxref` to match the new packet length

@@ -297,6 +297,73 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task CanonicalizesSubsetTags()
+    {
+        // A producer that embeds only the glyphs a document uses prefixes the font's name with a six
+        // letter tag, and Aspose.PDF picks that tag at random on every save. Each distinct tag is
+        // replaced in order of first appearance, and every occurrence of one tag gets the same
+        // replacement: a Type0 font and its descendant share a /BaseFont, and the descriptor repeats it
+        // as /FontName. The value may follow the key with no separating whitespace.
+        var input =
+            """
+            << /Type /Font /Subtype /Type0 /BaseFont /IIJUVL+OpenSans /DescendantFonts [5 0 R] >>
+            << /Type /Font /Subtype /CIDFontType2 /BaseFont/IIJUVL+OpenSans /FontDescriptor 6 0 R >>
+            << /Type /FontDescriptor /FontName /IIJUVL+OpenSans >>
+            << /Type /Font /Subtype /TrueType /BaseFont /QXWZRT+Arial-BoldMT >>
+            """;
+        var expected =
+            """
+            << /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+OpenSans /DescendantFonts [5 0 R] >>
+            << /Type /Font /Subtype /CIDFontType2 /BaseFont/AAAAAA+OpenSans /FontDescriptor 6 0 R >>
+            << /Type /FontDescriptor /FontName /AAAAAA+OpenSans >>
+            << /Type /Font /Subtype /TrueType /BaseFont /AAAAAB+Arial-BoldMT >>
+            """;
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task CollapsesRandomSubsetTagsToTheSameOutput()
+    {
+        var a = "/BaseFont /IIJUVL+OpenSans /FontName /IIJUVL+OpenSans /BaseFont /QXWZRT+Arial";
+        var b = "/BaseFont /EKFTWJ+OpenSans /FontName /EKFTWJ+OpenSans /BaseFont /MNBVCX+Arial";
+        await Assert.That(Normalize(a)).IsEqualTo(Normalize(b));
+    }
+
+    [Test]
+    public async Task LeavesFontNamesWithoutASubsetTagUntouched()
+    {
+        // A font embedded whole has no tag, and neither does anything shaped not quite like one: too
+        // few letters, too many, lower case, or a longer key merely starting with a handled one.
+        var input =
+            "/BaseFont /Helvetica /BaseFont /ABCDE+Short /BaseFont /ABCDEFG+Long " +
+            "/FontName /abcdef+Lower /BaseFontX /ABCDEF+Lookalike";
+        await Assert.That(Normalize(input)).IsEqualTo(input);
+    }
+
+    [Test]
+    public async Task CanonicalizesSubsetTagsAcrossRenders()
+    {
+        // The same document saved twice, differing only in the random tag of its subset font. The
+        // replacement is length-preserving, so the table is untouched and the document still loads.
+        var first = DocumentBuilder.Build(
+            "D:20240115093000Z",
+            "2024-01-15T09:30:00Z",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /IIJUVL+Helvetica >>");
+        var second = DocumentBuilder.Build(
+            "D:20240115093000Z",
+            "2024-01-15T09:30:00Z",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /EKFTWJ+Helvetica >>");
+        await Assert.That(second.SequenceEqual(first)).IsFalse();
+
+        var normalized = PdfNormalizer.Normalize(second);
+        await Assert.That(normalized).IsEquivalentTo(PdfNormalizer.Normalize(first));
+        await Assert.That(Encoding.Latin1.GetString(normalized)).Contains("/BaseFont /AAAAAA+Helvetica");
+
+        using var reader = DocLib.Instance.GetDocReader(normalized, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task HandlesUnterminatedFileIdWithoutOverrunning()
     {
         // A truncated /ID whose string runs to the end of the buffer with no closing '>'/')' (and no
