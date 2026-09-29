@@ -182,6 +182,26 @@ public class NormalizeReportTests
         await Assert.That(names).Contains("XMP packet whitespace");
     }
 
+    // A subset tag is reported under the key it follows, once per occurrence.
+    [Test]
+    public async Task ReportsSubsetTags()
+    {
+        var changes = Report(
+            """
+            /BaseFont /IIJUVL+OpenSans /BaseFont/IIJUVL+OpenSans
+            /FontName /IIJUVL+OpenSans
+            """);
+
+        await Assert.That(changes.Single(_ => _.Name == "/BaseFont").Count).IsEqualTo(2);
+        await Assert.That(changes.Single(_ => _.Name == "/FontName").Count).IsEqualTo(1);
+    }
+
+    // Each tag already in canonical order maps onto itself, so there is nothing to report: the same
+    // property that makes a second normalization report nothing.
+    [Test]
+    public async Task ReportsNothingForSubsetTagsAlreadyCanonical() =>
+        await Assert.That(Report("/BaseFont /AAAAAA+OpenSans /FontName /AAAAAA+OpenSans /BaseFont /AAAAAB+Arial")).IsEmpty();
+
     [Test]
     public async Task TheReportingOverloadProducesIdenticalBytes()
     {

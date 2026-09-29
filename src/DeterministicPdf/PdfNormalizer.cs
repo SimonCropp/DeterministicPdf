@@ -3,14 +3,19 @@ namespace DeterministicPdf;
 /// <summary>
 /// Neutralizes the non-deterministic fields of a PDF (the trailer <c>/ID</c>, the document
 /// information <c>/CreationDate</c> and <c>/ModDate</c>, the page and page-piece
-/// <c>/LastModified</c>, and the equivalent XMP metadata dates and identifiers) so that the same
-/// source document always produces byte-identical output.
+/// <c>/LastModified</c>, the equivalent XMP metadata dates and identifiers, and the tags of subset
+/// font names) so that the same source document always produces byte-identical output.
 /// </summary>
 /// <remarks>
 /// Neutralizing the values (dates and identifiers) is done in place and is length-preserving: only the
 /// mutable characters inside each value are overwritten, so every cross-reference offset stays valid. A
 /// value that has been compressed away (inside an <c>/ObjStm</c> object stream or a flate-compressed XMP
 /// packet) no longer appears literally and is therefore left as-is.
+/// <para>
+/// The six letter tag that prefixes the name of a subset font (<c>/BaseFont /IIJUVL+OpenSans</c>),
+/// which some producers pick at random on every save, is replaced the same way: each distinct tag, in
+/// order of first appearance, becomes <c>AAAAAA</c>, <c>AAAAAB</c>, and so on.
+/// </para>
 /// <para>
 /// The UTC offset of a date is then collapsed to <c>Z</c>. A producer spells it <c>Z</c> on a machine
 /// running in UTC and <c>+10:30</c> anywhere else, which are different lengths, so no length-preserving
@@ -133,6 +138,11 @@ public static partial class PdfNormalizer
         ZeroXmpProperty(data, "<stRef:documentID"u8, Fill.All, recorder, dates);
         ZeroXmpProperty(data, "<stRef:originalDocumentID"u8, Fill.All, recorder, dates);
         ZeroXmpProperty(data, "<stRef:lastModifyDate"u8, Fill.Digits, recorder, dates);
+
+        // Font subset tags. A producer that embeds only the glyphs a document uses prefixes the font's
+        // name with a six letter tag (/BaseFont /IIJUVL+OpenSans), and some (Aspose.PDF among them) pick
+        // that tag at random on every save.
+        CanonicalizeSubsetTags(data, recorder);
 
         // Collapse every UTC offset to "Z". A producer that spells the offset "Z" on a machine in UTC
         // and "+10:30" elsewhere writes dates of different *lengths*, which no amount of zeroing can
@@ -569,6 +579,109 @@ public static partial class PdfNormalizer
         }
 
         return false;
+    }
+
+    // Replaces the tag of every subset font name with one assigned in order of first appearance:
+    // AAAAAA, then AAAAAB, and so on. The tag is what tells two subsets of one font apart, so each
+    // distinct tag keeps a distinct replacement, and every occurrence of one tag (the /BaseFont of a
+    // Type0 font and of its descendant, the /FontName of the descriptor) gets the same one.
+    //
+    // The replacement is the same length as the tag, so every cross-reference offset stays valid. A
+    // document that is already normalized maps each tag onto itself, so a second pass changes, and
+    // reports, nothing.
+    static void CanonicalizeSubsetTags(byte[] data, ChangeRecorder recorder)
+    {
+        var occurrences = new List<(int start, byte[] key)>();
+        FindSubsetTags(data, "/BaseFont"u8.ToArray(), occurrences);
+        FindSubsetTags(data, "/FontName"u8.ToArray(), occurrences);
+
+        // The order the tags appear in the document, not the order the keys were searched for.
+        occurrences.Sort((left, right) => left.start.CompareTo(right.start));
+
+        var replacements = new Dictionary<int, byte[]>();
+        foreach (var (start, key) in occurrences)
+        {
+            // The six letters read as a base 26 number, so the tag keys the lookup without being
+            // decoded to a string.
+            var tag = 0;
+            for (var i = start; i < start + 6; i++)
+            {
+                tag = tag * 26 + (data[i] - 'A');
+            }
+
+            if (!replacements.TryGetValue(tag, out var replacement))
+            {
+                replacement = SubsetTag(replacements.Count);
+                replacements.Add(tag, replacement);
+            }
+
+            if (data.AsSpan(start, 6).SequenceEqual(replacement))
+            {
+                continue;
+            }
+
+            Array.Copy(replacement, 0, data, start, 6);
+            recorder.Record(key);
+        }
+    }
+
+    // Finds every name following 'key' that carries a subset tag. A longer key merely starting with
+    // this one (/BaseFontX) is skipped, since the byte after it is then a name character rather than
+    // whitespace or the '/' that opens the value.
+    static void FindSubsetTags(byte[] data, byte[] key, List<(int start, byte[] key)> occurrences)
+    {
+        var pos = 0;
+        while (true)
+        {
+            var hit = data.AsSpan(pos).IndexOf(key);
+            if (hit < 0)
+            {
+                return;
+            }
+
+            var i = pos + hit + key.Length;
+            pos = i;
+
+            i = SkipWhitespace(data, i);
+            if (i < data.Length &&
+                data[i] == (byte) '/' &&
+                IsSubsetTag(data, i + 1))
+            {
+                occurrences.Add((i + 1, key));
+            }
+        }
+    }
+
+    // A subset tag is exactly six uppercase letters followed by a '+'.
+    static bool IsSubsetTag(byte[] data, int start)
+    {
+        if (start + 6 >= data.Length)
+        {
+            return false;
+        }
+
+        for (var i = start; i < start + 6; i++)
+        {
+            if (data[i] is < (byte) 'A' or > (byte) 'Z')
+            {
+                return false;
+            }
+        }
+
+        return data[start + 6] == (byte) '+';
+    }
+
+    // The tag at 'index' in the sequence AAAAAA, AAAAAB, ... AAAAAZ, AAAABA.
+    static byte[] SubsetTag(int index)
+    {
+        var tag = new byte[6];
+        for (var i = 5; i >= 0; i--)
+        {
+            tag[i] = (byte) ('A' + index % 26);
+            index /= 26;
+        }
+
+        return tag;
     }
 
     // Returns the index of the ')' that closes the literal string starting at 'start', honoring
