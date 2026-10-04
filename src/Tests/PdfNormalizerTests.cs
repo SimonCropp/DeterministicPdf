@@ -377,7 +377,7 @@ public class PdfNormalizerTests
     [Test]
     public async Task NormalizedDocumentStillLoads()
     {
-        var data = await File.ReadAllBytesAsync("sample.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_pdf);
         data = PdfNormalizer.Normalize(data);
 
         using var reader = DocLib.Instance.GetDocReader(data, new(scalingFactor: 2));
@@ -389,7 +389,7 @@ public class PdfNormalizerTests
     {
         // sample-fop.pdf carries an uncompressed FOP-style XMP packet whose dc:date render time is
         // nested in rdf:Seq/rdf:li. It must be neutralized while the document still loads.
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         data = PdfNormalizer.Normalize(data);
 
         var text = Encoding.Latin1.GetString(data);
@@ -406,7 +406,7 @@ public class PdfNormalizerTests
         // sample-xmp-attributes.pdf carries an uncompressed XMP packet in the compact serialization: every
         // property is an attribute of rdf:Description, so none of the element passes sees it. The
         // values must be neutralized, the packet canonicalized, and the document must still load.
-        var raw = await File.ReadAllBytesAsync("sample-xmp-attributes.pdf");
+        var raw = await File.ReadAllBytesAsync(ProjectFiles.sample_xmp_attributes_pdf);
         var data = PdfNormalizer.Normalize(raw);
 
         var text = Encoding.Latin1.GetString(data);
@@ -430,8 +430,8 @@ public class PdfNormalizerTests
         // the platform's XML writer, so the JDK decides the indentation: one build emits a compact
         // packet, the other indents every element, and the raw bytes differ. Once normalized, the
         // output must collapse to identical bytes on both, and still load.
-        var compactRaw = await File.ReadAllBytesAsync("sample-fop-compact.pdf");
-        var indentedRaw = await File.ReadAllBytesAsync("sample-fop-indented.pdf");
+        var compactRaw = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_compact_pdf);
+        var indentedRaw = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_indented_pdf);
         await Assert.That(compactRaw.SequenceEqual(indentedRaw)).IsFalse();
 
         var compact = PdfNormalizer.Normalize(compactRaw);
@@ -509,7 +509,7 @@ public class PdfNormalizerTests
         // sign of its UTC offsets, and the two must normalize to identical bytes. Flipping the sign
         // is length-preserving, so the rewritten copy is a document the normalizer sees exactly as it
         // would a real western render.
-        var east = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var east = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var west = WithNegativeOffsets(east);
         await Assert.That(west.SequenceEqual(east)).IsFalse();
 
@@ -535,7 +535,7 @@ public class PdfNormalizerTests
     public async Task IsIdempotent()
     {
         // A second pass has nothing left to change: normalizing already-normalized bytes is a no-op.
-        var once = PdfNormalizer.Normalize(await File.ReadAllBytesAsync("sample.pdf"));
+        var once = PdfNormalizer.Normalize(await File.ReadAllBytesAsync(ProjectFiles.sample_pdf));
         var twice = PdfNormalizer.Normalize(once);
         await Assert.That(twice).IsEquivalentTo(once);
     }
@@ -545,7 +545,7 @@ public class PdfNormalizerTests
     {
         // A page subset is re-serialized by pdfium (reintroducing volatile fields) then normalized;
         // it must remain a valid one-page document.
-        var data = await File.ReadAllBytesAsync("sample.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_pdf);
         var split = DocLib.Instance.Split(data, 1, 1);
         split = PdfNormalizer.Normalize(split);
 
@@ -557,7 +557,7 @@ public class PdfNormalizerTests
     public async Task DoesNotMutateTheInputArray()
     {
         // The byte[] overload is non-destructive: the caller keeps ownership of the buffer it passed.
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var original = (byte[]) data.Clone();
 
         PdfNormalizer.Normalize(data);
@@ -568,7 +568,7 @@ public class PdfNormalizerTests
     [Test]
     public async Task StreamOverloadMatchesByteOverload()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var expected = PdfNormalizer.Normalize(data);
 
         using var source = new MemoryStream(data);
@@ -583,7 +583,7 @@ public class PdfNormalizerTests
     {
         // The document is preceded by unrelated bytes and the stream is positioned at the start of
         // the document, as it would be when reading from a container. Only the remainder is read.
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var expected = PdfNormalizer.Normalize(data);
 
         var prefix = "unrelated leading bytes"u8.ToArray();
@@ -601,7 +601,7 @@ public class PdfNormalizerTests
         // A MemoryStream that exposes its backing array (as produced by `new MemoryStream()` then
         // written to, which is how a caller hands over a freshly generated document) takes the
         // direct-copy fast path rather than the CopyTo fallback. It must honor Position too.
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var expected = PdfNormalizer.Normalize(data);
 
         var prefix = "unrelated leading bytes"u8.ToArray();
@@ -622,7 +622,7 @@ public class PdfNormalizerTests
         // A MemoryStream and a FileStream positioned identically must produce the same result. The
         // MemoryStream fast path reads the backing array directly, so it has to respect Position
         // the same way the copy fallback does.
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var prefixed = new byte[8 + data.Length];
         Array.Copy(data, 0, prefixed, 8, data.Length);
 
@@ -642,11 +642,11 @@ public class PdfNormalizerTests
     [Test]
     public async Task AsyncProducesSameOutputAsSync()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         var expected = PdfNormalizer.Normalize(data);
 
         // A non-seekable, non-MemoryStream source to exercise the copy path.
-        using var source = File.OpenRead("sample-fop.pdf");
+        using var source = ProjectFiles.sample_fop_pdf.OpenRead();
         using var result = await PdfNormalizer.NormalizeAsync(source);
 
         await Assert.That(result.ToArray()).IsEquivalentTo(expected);

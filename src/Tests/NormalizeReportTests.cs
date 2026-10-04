@@ -110,7 +110,7 @@ public class NormalizeReportTests
     [Test]
     public async Task ReportsTheSameFieldsForARealDocument()
     {
-        var data = await File.ReadAllBytesAsync("sample.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_pdf);
 
         PdfNormalizer.Normalize(data, out var changes);
 
@@ -123,7 +123,7 @@ public class NormalizeReportTests
     [Test]
     public async Task ReportsXmpCanonicalization()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop-indented.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_indented_pdf);
 
         PdfNormalizer.Normalize(data, out var changes);
 
@@ -133,7 +133,7 @@ public class NormalizeReportTests
     [Test]
     public async Task ReportsDublinCoreDate()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
 
         PdfNormalizer.Normalize(data, out var changes);
 
@@ -172,7 +172,7 @@ public class NormalizeReportTests
     [Test]
     public async Task ReportsTheXmpAttributeSample()
     {
-        var data = await File.ReadAllBytesAsync("sample-xmp-attributes.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_xmp_attributes_pdf);
 
         PdfNormalizer.Normalize(data, out var changes);
 
@@ -205,7 +205,7 @@ public class NormalizeReportTests
     [Test]
     public async Task TheReportingOverloadProducesIdenticalBytes()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
 
         var plain = PdfNormalizer.Normalize(data);
         var reported = PdfNormalizer.Normalize(data, out _);
@@ -216,7 +216,7 @@ public class NormalizeReportTests
     [Test]
     public async Task TheStreamOverloadReportsTheSameChanges()
     {
-        var data = await File.ReadAllBytesAsync("sample-fop.pdf");
+        var data = await File.ReadAllBytesAsync(ProjectFiles.sample_fop_pdf);
         PdfNormalizer.Normalize(data, out var fromBytes);
 
         using var source = new MemoryStream(data);
