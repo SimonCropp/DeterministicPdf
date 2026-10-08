@@ -13,7 +13,7 @@
     <PackageVersion Include="System.Buffers" Version="4.6.1" />
     <PackageVersion Include="System.Memory" Version="4.6.3" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
-    <PackageVersion Include="Verify" Version="33.3.2-beta.1" />
+    <PackageVersion Include="Verify" Version="33.3.2" />
     <PackageVersion Include="TUnit" Version="1.73.5" />
   </ItemGroup>
 </Project>
