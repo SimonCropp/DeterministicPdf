@@ -49,6 +49,16 @@ Two places record the same volatile information, and both must be handled:
 
 Plus the trailer file identifier `/ID [<...> <...>]`.
 
+Aspose.PDF writes the identifier as a *literal* string (`/ID[(...)(...)]`) and escapes whichever of
+its random bytes need it (`\000`, `\(`, `\\`), so the same sixteen bytes take anywhere from sixteen to
+sixty-four characters and zeroing in place leaves two renders different lengths. `ZeroFileId`
+therefore measures each literal element with `LiteralLength` *before* overwriting it (the overwrite
+zeroes the escapes too), and `CanonicalizeFileIdLength` cuts it down to one `0` per decoded byte.
+That is a length-changing rewrite with no cross-reference repair, and it works on a cross-reference
+*stream* (which is what Aspose.PDF writes) because `IsInFinalTrailer` only licenses it where nothing
+that has an offset follows: the trailer or cross-reference stream dictionary the final `startxref`
+points at. Anywhere else the identifier keeps its length.
+
 A third, per-producer stamp is `/LastModified` in a page or page-piece (`/PieceInfo`) dictionary. It is
 a plain date string like `/ModDate`, so the same `ZeroPdfString` pass covers it. PDFTron writes one
 onto the form XObject it uses for a watermark:

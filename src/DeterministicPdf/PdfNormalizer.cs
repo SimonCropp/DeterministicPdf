@@ -110,7 +110,13 @@ public static partial class PdfNormalizer
         ZeroPdfString(data, "/LastModified"u8, Fill.Digits, recorder, dates);
 
         // Trailer / cross-reference-stream file identifier: /ID [<...> <...>].
-        ZeroFileId(data, recorder);
+        var escapedIds = ZeroFileId(data, recorder);
+
+        // A producer that writes the identifier as a literal string (Aspose.PDF does) has to escape
+        // whichever of its random bytes are not printable, so the same sixteen bytes take a different
+        // number of characters on every save. Zeroing in place keeps that length, so the identifier is
+        // also cut down to one '0' per byte it encoded.
+        data = CanonicalizeFileIdLength(data, escapedIds, dates);
 
         // XMP metadata dates (uncompressed metadata streams only).
         ZeroXmpProperty(data, "<xmp:CreateDate"u8, Fill.Digits, recorder, dates);
@@ -213,8 +219,12 @@ public static partial class PdfNormalizer
 
     // Finds "/ID" followed by an array and zeroes each string element. Anything not shaped like the
     // identifier array (for example the "/IDTree" name-tree key) is skipped.
-    static void ZeroFileId(byte[] data, ChangeRecorder recorder)
+    //
+    // Returns the literal string elements whose escapes made them longer than the bytes they encode,
+    // each with the length it decodes to, for CanonicalizeFileIdLength to cut down.
+    static List<(int start, int end, int length)> ZeroFileId(byte[] data, ChangeRecorder recorder)
     {
+        var escaped = new List<(int start, int end, int length)>();
         var key = "/ID"u8;
         var pos = 0;
         while (true)
@@ -222,7 +232,7 @@ public static partial class PdfNormalizer
             var hit = data.AsSpan(pos).IndexOf(key);
             if (hit < 0)
             {
-                return;
+                return escaped;
             }
 
             var i = pos + hit + key.Length;
@@ -255,6 +265,16 @@ public static partial class PdfNormalizer
                 {
                     var start = i + 1;
                     i = FindLiteralEnd(data, start);
+
+                    // Measured before the overwrite, which zeroes the escapes along with the rest. An
+                    // unterminated string is left to the zeroing alone.
+                    var length = LiteralLength(data, start, i);
+                    if (i < data.Length &&
+                        length != i - start)
+                    {
+                        escaped.Add((start, i, length));
+                    }
+
                     if (Overwrite(data, start, i, Fill.All))
                     {
                         recorder.Record(key);
@@ -272,6 +292,178 @@ public static partial class PdfNormalizer
             }
 
             pos = i;
+        }
+    }
+
+    // The number of bytes the literal string between 'start' and 'end' decodes to: an escape is one
+    // byte however many characters spell it, a backslash before an end-of-line is none, and an
+    // end-of-line is one byte whichever way it is written.
+    static int LiteralLength(byte[] data, int start, int end)
+    {
+        var length = 0;
+        var i = start;
+        while (i < end)
+        {
+            var c = data[i];
+            i++;
+            if (c == (byte) '\\')
+            {
+                if (i >= end)
+                {
+                    break;
+                }
+
+                c = data[i];
+                if (IsOctalDigit(c))
+                {
+                    var digits = 0;
+                    while (i < end && digits < 3 && IsOctalDigit(data[i]))
+                    {
+                        i++;
+                        digits++;
+                    }
+
+                    length++;
+                    continue;
+                }
+
+                if (c is (byte) '\r' or (byte) '\n')
+                {
+                    i = SkipEol(data, i);
+                    continue;
+                }
+
+                i++;
+                length++;
+                continue;
+            }
+
+            if (c == (byte) '\r' &&
+                i < end &&
+                data[i] == (byte) '\n')
+            {
+                i++;
+            }
+
+            length++;
+        }
+
+        return length;
+    }
+
+    static bool IsOctalDigit(byte b) =>
+        b is >= (byte) '0' and <= (byte) '7';
+
+    // Cuts each escaped identifier element down to one '0' per byte it encoded.
+    //
+    // This shortens the document, and unlike the time zone and XMP packet rewrites it is not limited
+    // to a classic cross-reference table: Aspose.PDF writes a cross-reference stream, and that is the
+    // producer this exists for. It needs no repair instead, by only applying where nothing that has an
+    // offset comes after the identifier: in the trailer, or the cross-reference stream dictionary, that
+    // the final startxref hands the reader to. An identifier anywhere else (an earlier section of an
+    // incrementally updated document, the first trailer of a linearized one) keeps the length it had.
+    //
+    // 'dates' holds positions in the buffer being replaced, so any that trail an edit are shifted.
+    static byte[] CanonicalizeFileIdLength(byte[] data, List<(int start, int end, int length)> escaped, List<NeutralizedDate> dates)
+    {
+        var edits = new List<(int start, int end, byte[] replacement)>();
+        foreach (var (start, end, length) in escaped)
+        {
+            if (!IsInFinalTrailer(data, start, end))
+            {
+                continue;
+            }
+
+            var replacement = new byte[length];
+            replacement.AsSpan().Fill((byte) '0');
+            edits.Add((start, end, replacement));
+        }
+
+        if (edits.Count == 0)
+        {
+            return data;
+        }
+
+        for (var index = 0; index < dates.Count; index++)
+        {
+            var date = dates[index];
+            dates[index] = date with
+            {
+                Start = Shift(edits, date.Start),
+                End = Shift(edits, date.End)
+            };
+        }
+
+        return ApplyEdits(data, edits);
+    }
+
+    // Whether the value between 'start' and 'end' sits in the trailer, or the cross-reference stream
+    // dictionary, that the final startxref points at, with no object and no further cross-reference
+    // section after it. Shortening such a value moves nothing that an offset refers to: every object
+    // precedes it, and so does the section startxref points at.
+    static bool IsInFinalTrailer(byte[] data, int start, int end)
+    {
+        var startxref = LastIndexOf(data, "startxref"u8, data.Length);
+        if (startxref < end)
+        {
+            return false;
+        }
+
+        var cursor = SkipWhitespace(data, startxref + "startxref"u8.Length);
+        if (!TryReadInt(data, ref cursor, out var section) ||
+            section >= start)
+        {
+            return false;
+        }
+
+        // The data of a cross-reference stream is compressed, so it can spell anything by accident and
+        // is stepped over rather than searched.
+        var position = end;
+        var keyword = FindStreamKeyword(data, end);
+        if (keyword >= 0 && keyword < startxref)
+        {
+            if (ContainsSection(data, position, keyword))
+            {
+                return false;
+            }
+
+            position = LastIndexOf(data, "endstream"u8, startxref);
+            if (position < keyword)
+            {
+                return false;
+            }
+
+            position += "endstream"u8.Length;
+        }
+
+        return !ContainsSection(data, position, startxref);
+    }
+
+    // Whether an object or a cross-reference table starts between 'start' and 'end'.
+    static bool ContainsSection(byte[] data, int start, int end)
+    {
+        var region = data.AsSpan(start, end - start);
+        if (region.IndexOf("xref"u8) >= 0)
+        {
+            return true;
+        }
+
+        var position = 0;
+        while (true)
+        {
+            var hit = region[position..].IndexOf("obj"u8);
+            if (hit < 0)
+            {
+                return false;
+            }
+
+            position += hit;
+            if (position < 3 || !region.Slice(position - 3, 3).SequenceEqual("end"u8))
+            {
+                return true;
+            }
+
+            position += "obj"u8.Length;
         }
     }
 

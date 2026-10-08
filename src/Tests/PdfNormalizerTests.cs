@@ -375,6 +375,54 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task CollapsesEscapedLiteralFileIdsToTheSameOutput()
+    {
+        // Aspose.PDF writes the identifier as a literal string and escapes whichever of its random
+        // bytes need it, so two saves of one document spell the same eight bytes at different lengths.
+        // Zeroing in place would keep that difference.
+        var a = WithFileId(@"[(\000AB\(C\\D\n) (0123456789ABCDEF)]");
+        var b = WithFileId(@"[(ABCDEFGH) (0123456789ABCDEF)]");
+        await Assert.That(a.Length).IsNotEqualTo(b.Length);
+
+        var normalizedA = PdfNormalizer.Normalize(a);
+        var normalizedB = PdfNormalizer.Normalize(b);
+
+        await Assert.That(normalizedA).IsEquivalentTo(normalizedB);
+        await Assert.That(Encoding.Latin1.GetString(normalizedA)).Contains("/ID [(00000000) (0000000000000000)]");
+        await Assert.That(PdfNormalizer.Normalize(normalizedA)).IsEquivalentTo(normalizedA);
+
+        using var reader = DocLib.Instance.GetDocReader(normalizedA, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task KeepsTheLengthOfAnEscapedFileIdOutsideTheFinalTrailer()
+    {
+        // Objects follow this identifier, so shortening it would move them out from under their
+        // cross-reference offsets. It is zeroed and left the length it was.
+        var input =
+            """
+            /ID [(\101BC)]
+            1 0 obj
+            << >>
+            endobj
+            startxref
+            0
+            %%EOF
+            """;
+
+        await Assert.That(Normalize(input)).StartsWith("/ID [(000000)]");
+    }
+
+    // A complete document whose trailer carries 'id' in place of the hex identifier the builder writes.
+    // The trailer follows everything the cross-reference table points at, so the swap leaves it valid.
+    static byte[] WithFileId(string id)
+    {
+        var document = Encoding.Latin1.GetString(DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z"));
+        return Encoding.Latin1.GetBytes(document.Replace("[<A1B2C3D4E5F60718> <1122334455667788>]", id));
+    }
+
+    [Test]
     public async Task NormalizedDocumentStillLoads()
     {
         var data = await File.ReadAllBytesAsync(ProjectFiles.sample_pdf);
