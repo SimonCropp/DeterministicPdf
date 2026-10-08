@@ -17,7 +17,7 @@ A PDF records when it was produced and stamps every render with fresh identifier
 
 ## What is neutralized
 
- * The trailer file identifier `/ID [<...> <...>]`
+ * The trailer file identifier `/ID [<...> <...>]`. A producer that writes it as a literal string (`/ID [(...) (...)]`, as Aspose.PDF does) has to escape whichever of its random bytes are not printable, so the same sixteen bytes take a different number of characters on every save. In the final trailer or cross-reference stream dictionary, where nothing with an offset follows it, such an identifier is also cut down to one `0` per byte it encoded.
  * The document information dictionary dates `/CreationDate` and `/ModDate`
  * The page and page-piece dictionary date `/LastModified`, which a producer stamps with a wall-clock time for its own private data (PDFTron writes one onto the form XObject it uses for a watermark)
  * The XMP metadata dates `xmp:CreateDate`, `xmp:ModifyDate`, and `xmp:MetadataDate`
