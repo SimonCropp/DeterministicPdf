@@ -61,13 +61,30 @@ public static partial class PdfNormalizer
     /// <summary>
     /// Returns a normalized copy of <paramref name="data"/>. The input array is not modified.
     /// </summary>
-    public static byte[] Normalize(byte[] data)
+    public static byte[] Normalize(byte[] data) =>
+        Normalize(data, false);
+
+    /// <summary>
+    /// Returns a normalized copy of <paramref name="data"/>, optionally with its embedded font programs
+    /// removed. The input array is not modified.
+    /// </summary>
+    /// <param name="data">The document to normalize.</param>
+    /// <param name="stripEmbeddedFonts">
+    /// Removes every embedded font program (<c>/FontFile</c>, <c>/FontFile2</c>, <c>/FontFile3</c>) and
+    /// the font descriptor entry pointing at it. A producer embeds a subset of whichever copy of a font
+    /// the machine has installed, so two machines with different versions of one font render the same
+    /// document to different bytes; with the programs gone the two agree. This is lossy: the result
+    /// names its fonts without embedding them, so a viewer substitutes its own. A document that cannot
+    /// be safely rewritten (an incremental update, a cross-reference stream with a predictor, a font
+    /// descriptor held in an object stream) keeps its fonts.
+    /// </param>
+    public static byte[] Normalize(byte[] data, bool stripEmbeddedFonts)
     {
         // The passes below overwrite bytes in place, so work on a copy: a public caller keeps
         // ownership of the buffer it passed in.
         var copy = new byte[data.Length];
         Array.Copy(data, copy, data.Length);
-        return NormalizeCore(copy, new());
+        return NormalizeCore(copy, new(), stripEmbeddedFonts);
     }
 
     /// <summary>
@@ -80,19 +97,26 @@ public static partial class PdfNormalizer
     /// normalized, since a pass records only when bytes really changed rather than merely because it
     /// ran — which is what makes this usable as the reason a document is not yet deterministic.
     /// </param>
-    public static byte[] Normalize(byte[] data, out IReadOnlyList<NormalizeChange> changes)
+    public static byte[] Normalize(byte[] data, out IReadOnlyList<NormalizeChange> changes) =>
+        Normalize(data, false, out changes);
+
+    /// <inheritdoc cref="Normalize(byte[], out IReadOnlyList{NormalizeChange})"/>
+    /// <param name="data">The document to normalize.</param>
+    /// <param name="stripEmbeddedFonts"><inheritdoc cref="Normalize(byte[], bool)" path="/param[@name='stripEmbeddedFonts']"/></param>
+    /// <param name="changes"><inheritdoc cref="Normalize(byte[], out IReadOnlyList{NormalizeChange})" path="/param[@name='changes']"/></param>
+    public static byte[] Normalize(byte[] data, bool stripEmbeddedFonts, out IReadOnlyList<NormalizeChange> changes)
     {
         var copy = new byte[data.Length];
         Array.Copy(data, copy, data.Length);
         var recorder = new ChangeRecorder();
-        var result = NormalizeCore(copy, recorder);
+        var result = NormalizeCore(copy, recorder, stripEmbeddedFonts);
         changes = recorder.Changes;
         return result;
     }
 
     // Normalizes 'data' in place, returning either the same array or (when a length-changing rewrite
     // applies, which the time zone and XMP packet passes both are) a freshly built one.
-    static byte[] NormalizeCore(byte[] data, ChangeRecorder recorder)
+    static byte[] NormalizeCore(byte[] data, ChangeRecorder recorder, bool stripEmbeddedFonts)
     {
         // Where every date the passes below neutralize ends up. The time zone rewrite has to find them
         // again, and taking them from the passes themselves is what stops a second list of date keys
@@ -169,7 +193,13 @@ public static partial class PdfNormalizer
             recorder.Record("XMP packet whitespace");
         }
 
-        return canonicalized;
+        if (!stripEmbeddedFonts)
+        {
+            return canonicalized;
+        }
+
+        // Last, so that every pass above sees the document as the producer wrote it.
+        return StripEmbeddedFonts(canonicalized, recorder);
     }
 
     // Finds a name key, then overwrites the string value that follows it. The value may be a

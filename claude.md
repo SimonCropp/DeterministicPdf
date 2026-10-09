@@ -158,8 +158,48 @@ untouched.
   copy inside an uncompressed embedded font program, or a `+` written as the name escape `#2B`, is
   left as-is.
 
+### Stripping embedded fonts (opt-in, `PdfNormalizer_Fonts.cs`)
+
+A producer embeds a subset of whichever copy of a font the machine has installed (Arial 7.01 on a
+build agent, 7.06 on a developer machine), so the font program differs in content *and length*
+between machines, and being compressed there is nothing in it to zero. `stripEmbeddedFonts` removes
+it. This is the only lossy pass, so it is off by default and runs last, after every other pass has
+seen the document as the producer wrote it.
+
+`StripEmbeddedFonts` finds each `/FontFile`, `/FontFile2`, `/FontFile3` reference outside stream data
+and builds one list of edits:
+
+1. The descriptor entry itself is removed (the font stays named, just not embedded).
+2. The font stream's data is removed. It is measured by the `/Length` the dictionary declares, not by
+   searching for `endstream`, which compressed data can spell by accident.
+3. `/Length`, `/Length1`, `/Length2`, `/Length3` become `0`, direct or through `TryResolveInt` in the
+   object an indirect one names.
+4. `AddOrphanedLengths`: Aspose.PDF writes the compressed length into an object of its own even when
+   the dictionary states it directly, leaving an object nothing refers to that is just as
+   machine-dependent. An object that is only that number **and that no reference names** is zeroed
+   too. The reference check is what keeps it from touching another stream's length that happens to
+   match.
+
+The stream sits mid-body, so unlike the `/ID` rewrite this one does need offsets repaired, and unlike
+the time zone and XMP rewrites it has to handle a cross-reference *stream*, because that is what
+Aspose.PDF writes:
+
+- Classic table: `TryReadClassicXref`, then the same `Shift`/`WriteOffset` repair the other rewrites
+  use. A hybrid document (`/XRefStm`) bails.
+- Cross-reference stream: `TryReadXrefStream` inflates it and adds edits that restate it
+  **uncompressed** (drop `/Filter`, restate `/Length`, replace the data with the decoded entries).
+  Recompressing would make the output depend on the runtime's deflate implementation. The decoded
+  array is itself the replacement in the edit list, so `ShiftXrefStreamEntries` rewrites the type 1
+  offsets in it once all edit lengths are known and before `ApplyEdits` copies it. `/Prev`,
+  `/DecodeParms` (a predictor) and any filter but `/FlateDecode` bail.
+
+Every bail-out returns the input array, so nothing is half-applied. A font descriptor inside an
+`/ObjStm` is invisible, so nothing is found and the document is left alone.
+
 ## API shape
 
+- Every overload has a counterpart taking `bool stripEmbeddedFonts`. They are separate overloads
+  rather than an optional parameter so that adding them was not a binary break.
 - `Normalize(byte[])` returns a normalized **copy** — the caller's array is never modified. Internally
   `NormalizeCore` does the work in place, so the stream overloads (which own the buffer they just
   built) skip the defensive copy.

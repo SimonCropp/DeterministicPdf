@@ -129,3 +129,31 @@ foreach (var change in changes)
 A change is only reported when bytes actually differed, never merely because a pass ran. So an already normalized document reports nothing, and the list doubles as the answer to "why is this document not deterministic?".
 
 There is no async counterpart. Only reading the stream is asynchronous — normalizing is synchronous work over the resident buffer — so an async overload would have to return the report beside the stream for no gain over reading the bytes first.
+
+
+### Stripping embedded fonts
+
+A producer embeds a subset of whichever copy of a font the machine has installed. A developer machine with Arial 7.06 and a build agent with Arial 7.01 therefore render the same document to different bytes: the two font programs draw the same glyphs, but they are different lengths, and being compressed they hold nothing that could be zeroed. Aspose.Words, Aspose.Cells and Aspose.PDF all behave this way.
+
+Every `Normalize` overload has a counterpart taking `stripEmbeddedFonts`, which removes the font programs so the two renders agree:
+
+<!-- snippet: StripEmbeddedFonts -->
+<a id='snippet-StripEmbeddedFonts'></a>
+```cs
+var withoutFonts = PdfNormalizer.Normalize(bytes, stripEmbeddedFonts: true);
+```
+<sup><a href='/src/Tests/Snippets.cs#L40-L44' title='Snippet source file'>snippet source</a> | <a href='#snippet-StripEmbeddedFonts' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+For each font descriptor entry `/FontFile`, `/FontFile2` or `/FontFile3`:
+
+ * The entry is removed from the font descriptor, leaving the font named but not embedded
+ * The data of the font stream is removed
+ * Every length the stream declared (`/Length`, `/Length1`, `/Length2`, `/Length3`) is restated as `0`, in the dictionary or in the object an indirect one refers to
+ * An object that holds nothing but the stream's length, and that nothing refers to, is restated as `0` as well (Aspose.PDF leaves one behind)
+
+The stream usually sits in the middle of the document, so everything after it moves and the cross-reference section is repaired. A classic table has its offsets rewritten in place. A cross-reference stream is rewritten uncompressed, since recompressing it would make the result depend on the deflate implementation of the runtime doing the work.
+
+This is lossy, which is why it is off by default: a viewer opening the result substitutes fonts of its own. It suits a snapshot that is compared rather than read. Each removed entry is reported under its key (`/FontFile2`).
+
+Fonts are left embedded when the document cannot be safely rewritten: an incremental update, a hybrid cross-reference table (`/XRefStm`), a cross-reference stream that uses a predictor (`/DecodeParms`) or a filter other than `/FlateDecode`, or a font descriptor held in an `/ObjStm` object stream.
