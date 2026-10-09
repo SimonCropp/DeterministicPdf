@@ -15,20 +15,37 @@ public static partial class PdfNormalizer
     /// The current position is honored for every stream type, including <see cref="MemoryStream"/>.
     /// </remarks>
     public static MemoryStream Normalize(Stream source) =>
-        // The buffer is built here, so it is owned here: patch it in place rather than copying again.
-        new(NormalizeCore(ToBytes(source), new()));
+        Normalize(source, false);
 
     /// <inheritdoc cref="Normalize(Stream)"/>
-    public static async Task<MemoryStream> NormalizeAsync(Stream source, Cancel cancel = default) =>
-        new(NormalizeCore(await ToBytesAsync(source, cancel), new()));
+    /// <param name="source">The document to normalize.</param>
+    /// <param name="stripEmbeddedFonts"><inheritdoc cref="Normalize(byte[], bool)" path="/param[@name='stripEmbeddedFonts']"/></param>
+    public static MemoryStream Normalize(Stream source, bool stripEmbeddedFonts) =>
+        // The buffer is built here, so it is owned here: patch it in place rather than copying again.
+        new(NormalizeCore(ToBytes(source), new(), stripEmbeddedFonts));
+
+    /// <inheritdoc cref="Normalize(Stream)"/>
+    public static Task<MemoryStream> NormalizeAsync(Stream source, Cancel cancel = default) =>
+        NormalizeAsync(source, false, cancel);
+
+    /// <inheritdoc cref="Normalize(Stream, bool)"/>
+    public static async Task<MemoryStream> NormalizeAsync(Stream source, bool stripEmbeddedFonts, Cancel cancel = default) =>
+        new(NormalizeCore(await ToBytesAsync(source, cancel), new(), stripEmbeddedFonts));
 
     /// <inheritdoc cref="Normalize(Stream)"/>
     /// <param name="source">The document to normalize.</param>
     /// <param name="changes"><inheritdoc cref="Normalize(byte[], out IReadOnlyList{NormalizeChange})" path="/param[@name='changes']"/></param>
-    public static MemoryStream Normalize(Stream source, out IReadOnlyList<NormalizeChange> changes)
+    public static MemoryStream Normalize(Stream source, out IReadOnlyList<NormalizeChange> changes) =>
+        Normalize(source, false, out changes);
+
+    /// <inheritdoc cref="Normalize(Stream)"/>
+    /// <param name="source">The document to normalize.</param>
+    /// <param name="stripEmbeddedFonts"><inheritdoc cref="Normalize(byte[], bool)" path="/param[@name='stripEmbeddedFonts']"/></param>
+    /// <param name="changes"><inheritdoc cref="Normalize(byte[], out IReadOnlyList{NormalizeChange})" path="/param[@name='changes']"/></param>
+    public static MemoryStream Normalize(Stream source, bool stripEmbeddedFonts, out IReadOnlyList<NormalizeChange> changes)
     {
         var recorder = new ChangeRecorder();
-        var result = new MemoryStream(NormalizeCore(ToBytes(source), recorder));
+        var result = new MemoryStream(NormalizeCore(ToBytes(source), recorder, stripEmbeddedFonts));
         changes = recorder.Changes;
         return result;
     }

@@ -36,5 +36,11 @@ public static class Snippets
         }
 
         #endregion
+
+        #region StripEmbeddedFonts
+
+        var withoutFonts = PdfNormalizer.Normalize(bytes, stripEmbeddedFonts: true);
+
+        #endregion
     }
 }
