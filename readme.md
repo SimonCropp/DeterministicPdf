@@ -20,6 +20,7 @@ A PDF records when it was produced and stamps every render with fresh identifier
  * The trailer file identifier `/ID [<...> <...>]`. A producer that writes it as a literal string (`/ID [(...) (...)]`, as Aspose.PDF does) has to escape whichever of its random bytes are not printable, so the same sixteen bytes take a different number of characters on every save. In the final trailer or cross-reference stream dictionary, where nothing with an offset follows it, such an identifier is also cut down to one `0` per byte it encoded.
  * The document information dictionary dates `/CreationDate` and `/ModDate`
  * The page and page-piece dictionary date `/LastModified`, which a producer stamps with a wall-clock time for its own private data (PDFTron writes one onto the form XObject it uses for a watermark)
+ * The document information dictionary `/Producer`, and its XMP twin `pdf:Producer`. It names the library and version that wrote the document (`iText® Core 9.8.0 (AGPL version) ©2000-2026 Apryse Group NV`), so it changes with every upgrade of that library even when nothing about the document did. Since its length changes with the version too (`9.10.0` after `9.9.0`), it is removed altogether (`/Producer ()`, `<pdf:Producer></pdf:Producer>`), with the same repair as the time zone designators below. A document that cannot be safely rewritten has every character but whitespace zeroed instead.
  * The XMP metadata dates `xmp:CreateDate`, `xmp:ModifyDate`, and `xmp:MetadataDate`
  * The Dublin Core `dc:date`, whether written as direct text content or nested in an `rdf:Seq`/`rdf:li` array
  * The XMP per-generation identifiers `xmpMM:DocumentID`, `xmpMM:InstanceID`, and `xmpMM:OriginalDocumentID`
@@ -37,7 +38,18 @@ A date's UTC offset is made of separators, so it survives the zeroing and goes o
 
 The offset also varies in *length*: a producer writes `Z` on a machine running in UTC and `+10:30` anywhere else, so the two renders are different-sized documents and no amount of zeroing can reconcile them. Every designator is therefore collapsed to `Z`.
 
-That shortens the document, so — exactly as for the XMP packet below — the metadata stream length, the cross-reference table offsets and `startxref` are repaired afterwards. A document that cannot be safely rewritten is left to the zeroing alone, which still forces the sign. A date inside a stream whose length this cannot restate is skipped rather than shortened out from under it.
+That shortens the document, so the metadata stream length and every offset that moved are repaired afterwards (see [Repairing offsets](#repairing-offsets)). A document that cannot be safely rewritten is left to the zeroing alone, which still forces the sign. A date inside a stream other than a metadata stream is skipped rather than shortened out from under a length this cannot restate.
+
+
+### Repairing offsets
+
+Collapsing time zones, removing the producer, canonicalizing the XMP packets and stripping fonts all change the length of the document, so every byte position it records is repaired afterwards. The chain of cross-reference sections is followed from every `startxref`, through each `/Prev` and the `/XRefStm` of a hybrid trailer, so an incrementally updated document (iText appends a revision each time it modifies one) is repaired in every revision:
+
+ * A classic cross-reference table has its offsets rewritten in place.
+ * A cross-reference stream is rewritten uncompressed, since recompressing it would make the result depend on the deflate implementation of the runtime doing the work. Its `/Filter` and `/DecodeParms` are dropped, which covers the PNG predictor iText and PDFBox write, and its offset field is widened when what it records has moved past what the field can hold.
+ * Every `startxref`, `/Prev` and `/XRefStm` is repointed at where its section now starts.
+
+A linearized document is left to the length-preserving passes, since its hint tables record offsets in a form this does not rewrite. So is a document whose chain cannot be followed: a pointer that does not land on a section, a cross-reference stream with a filter other than `/FlateDecode` or a predictor other than PNG.
 
 
 ## How it works
@@ -46,15 +58,16 @@ That shortens the document, so — exactly as for the XMP packet below — the m
  * Zero the volatile values in place, preserving the length of each
  * Replace the tags of subset font names with canonical ones, also in place
  * Collapse every date's UTC offset to `Z`, and repair the offsets that shifted
- * Canonicalize the XMP metadata packet by collapsing inter-element whitespace
- * Repair the metadata stream `/Length`, the cross-reference table offsets, and `startxref` to match the new packet length
+ * Remove the producer, and repair the offsets that shifted
+ * Canonicalize each XMP metadata packet by collapsing inter-element whitespace
+ * Repair each metadata stream `/Length`, every cross-reference section, and every pointer to one, to match the new packet lengths
 
 
 ### XMP whitespace canonicalization
 
 Apache FOP serializes the XMP packet through the platform's XML writer, so the same document is indented differently depending on which JRE produced it. Once the volatile values are zeroed, that whitespace is the only remaining cross-platform difference, so the packet is collapsed to a single canonical form.
 
-Because this changes the packet length, the metadata stream length and the classic cross-reference table are repaired afterwards. A document that cannot be safely rewritten this way — a cross-reference stream, an incremental update, more than one XMP packet, or an unlocatable stream length — is left unchanged. The volatile values are still zeroed in that case, since that pass is length-preserving and always safe.
+Because this changes the packet length, the metadata stream length and every offset that moved are repaired afterwards (see [Repairing offsets](#repairing-offsets)). An incrementally updated document has a packet per revision that changed its metadata, and each is canonicalized. A packet that is not the whole content of its stream, or whose stream length cannot be located, is left as it is, and a document that cannot be safely rewritten is left unchanged. The volatile values are still zeroed in that case, since that pass is length-preserving and always safe.
 
 
 ### Compressed values
@@ -152,8 +165,8 @@ For each font descriptor entry `/FontFile`, `/FontFile2` or `/FontFile3`:
  * Every length the stream declared (`/Length`, `/Length1`, `/Length2`, `/Length3`) is restated as `0`, in the dictionary or in the object an indirect one refers to
  * An object that holds nothing but the stream's length, and that nothing refers to, is restated as `0` as well (Aspose.PDF leaves one behind)
 
-The stream usually sits in the middle of the document, so everything after it moves and the cross-reference section is repaired. A classic table has its offsets rewritten in place. A cross-reference stream is rewritten uncompressed, since recompressing it would make the result depend on the deflate implementation of the runtime doing the work.
+The stream usually sits in the middle of the document, so everything after it moves and every offset is repaired (see [Repairing offsets](#repairing-offsets)).
 
 This is lossy, which is why it is off by default: a viewer opening the result substitutes fonts of its own. It suits a snapshot that is compared rather than read. Each removed entry is reported under its key (`/FontFile2`).
 
-Fonts are left embedded when the document cannot be safely rewritten: an incremental update, a hybrid cross-reference table (`/XRefStm`), a cross-reference stream that uses a predictor (`/DecodeParms`) or a filter other than `/FlateDecode`, or a font descriptor held in an `/ObjStm` object stream.
+Fonts are left embedded when the document cannot be safely rewritten (see [Repairing offsets](#repairing-offsets)), or when a font descriptor is held in an `/ObjStm` object stream.

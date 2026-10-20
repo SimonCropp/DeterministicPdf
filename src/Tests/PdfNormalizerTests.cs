@@ -41,6 +41,44 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task NeutralizesProducer()
+    {
+        // The producer names the library and version that wrote the document, so it changes with
+        // every upgrade of that library even when nothing about the document did. Every character but
+        // whitespace is zeroed, the parentheses and escapes a literal string may hold among them, so
+        // the length and the string's end stay where they were.
+        var input = @"/Producer (iText\256 Core 9.8.0 \(AGPL version\))/Title(Certificate)";
+        var expected = "/Producer (000000000 0000 00000 000000 000000000)/Title(Certificate)";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesHexProducer()
+    {
+        // A producer written as UTF-16 is often a hex string.
+        var input = "/Producer <FEFF00690054006500780074>";
+        var expected = "/Producer <000000000000000000000000>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesXmpProducer()
+    {
+        // Both RDF serializations: the element Apache FOP writes and the attribute iText writes.
+        var input =
+            """
+            <pdf:Producer>iText® Core 9.8.0</pdf:Producer>
+            <rdf:Description pdf:Producer="Apache FOP Version 2.9"/>
+            """;
+        var expected =
+            """
+            <pdf:Producer>000000 0000 00000</pdf:Producer>
+            <rdf:Description pdf:Producer="000000 000 0000000 000"/>
+            """;
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task NeutralizesPageLastModified()
     {
         // The page dictionary form: /LastModified is required on a page that carries a /PieceInfo.
@@ -185,7 +223,7 @@ public class PdfNormalizerTests
                  xmpMM:DocumentID="{new('0', 41)}"
                  xmpMM:InstanceID="{new('0', 16)}"
                  xmpMM:OriginalDocumentID="{new('0', 41)}"
-                 pdf:Producer="iText"/>
+                 pdf:Producer="00000"/>
              """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }
@@ -547,6 +585,53 @@ public class PdfNormalizerTests
         // means it must not disturb the cross-reference table it repaired the first time.
         var once = PdfNormalizer.Normalize(DocumentBuilder.Build("D:20240115093000+05'30'", "2024-01-15T09:30:00+05:30"));
         await Assert.That(PdfNormalizer.Normalize(once)).IsEquivalentTo(once);
+    }
+
+    [Test]
+    public async Task RemovesProducerAcrossVersions()
+    {
+        // A producer names its version, so an upgrade from 9.9.0 to 9.10.0 makes the two renders of
+        // one document different lengths, and zeroing the characters alone cannot reconcile them. The
+        // producer is removed altogether, from the information dictionary and the XMP packet, with the
+        // cross-reference table and the metadata stream length repaired behind it.
+        var before = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z", producer: "iText Core 9.9.0");
+        var after = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z", producer: "iText Core 9.10.0");
+        await Assert.That(after.Length).IsNotEqualTo(before.Length);
+
+        var fromBefore = PdfNormalizer.Normalize(before);
+        var fromAfter = PdfNormalizer.Normalize(after);
+        await Assert.That(fromAfter).IsEquivalentTo(fromBefore);
+
+        var text = Encoding.Latin1.GetString(fromAfter);
+        await Assert.That(text).Contains("/Producer ()");
+        await Assert.That(text).Contains("<pdf:Producer></pdf:Producer>");
+
+        using var reader = DocLib.Instance.GetDocReader(fromAfter, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+
+        // A second pass finds the producer already empty and leaves the document as it is.
+        await Assert.That(PdfNormalizer.Normalize(fromAfter)).IsEquivalentTo(fromAfter);
+    }
+
+    [Test]
+    public async Task RemovesHexProducer()
+    {
+        // Swapped for a hex string of the same length, so the offsets the builder wrote still hold.
+        var data = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z");
+        var text = Encoding.Latin1.GetString(data).Replace("/Producer (Test)", "/Producer <0054>");
+        var normalized = Encoding.Latin1.GetString(PdfNormalizer.Normalize(Encoding.Latin1.GetBytes(text)));
+        await Assert.That(normalized).Contains("/Producer <>");
+    }
+
+    [Test]
+    public async Task ReportsARemovedProducerThatWasAlreadyZeroed()
+    {
+        // A producer the in-place zeroing finds already all zeros is reported by the removal instead,
+        // so the report still says the document was not yet deterministic.
+        var data = DocumentBuilder.Build("D:00000000000000Z", "0000-00-00T00:00:00Z", producer: "0000");
+        PdfNormalizer.Normalize(data, out var changes);
+        await Assert.That(changes.Select(_ => _.Name)).Contains("/Producer");
+        await Assert.That(changes.Select(_ => _.Name)).Contains("pdf:Producer");
     }
 
     [Test]
