@@ -41,6 +41,44 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task NeutralizesProducer()
+    {
+        // The producer names the library and version that wrote the document, so it changes with
+        // every upgrade of that library even when nothing about the document did. Every character but
+        // whitespace is zeroed, the parentheses and escapes a literal string may hold among them, so
+        // the length and the string's end stay where they were.
+        var input = @"/Producer (iText\256 Core 9.8.0 \(AGPL version\))/Title(Certificate)";
+        var expected = "/Producer (000000000 0000 00000 000000 000000000)/Title(Certificate)";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesHexProducer()
+    {
+        // A producer written as UTF-16 is often a hex string.
+        var input = "/Producer <FEFF00690054006500780074>";
+        var expected = "/Producer <000000000000000000000000>";
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task NeutralizesXmpProducer()
+    {
+        // Both RDF serializations: the element Apache FOP writes and the attribute iText writes.
+        var input =
+            """
+            <pdf:Producer>iText® Core 9.8.0</pdf:Producer>
+            <rdf:Description pdf:Producer="Apache FOP Version 2.9"/>
+            """;
+        var expected =
+            """
+            <pdf:Producer>000000 0000 00000</pdf:Producer>
+            <rdf:Description pdf:Producer="000000 000 0000000 000"/>
+            """;
+        await Assert.That(Normalize(input)).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task NeutralizesPageLastModified()
     {
         // The page dictionary form: /LastModified is required on a page that carries a /PieceInfo.
@@ -185,7 +223,7 @@ public class PdfNormalizerTests
                  xmpMM:DocumentID="{new('0', 41)}"
                  xmpMM:InstanceID="{new('0', 16)}"
                  xmpMM:OriginalDocumentID="{new('0', 41)}"
-                 pdf:Producer="iText"/>
+                 pdf:Producer="00000"/>
              """;
         await Assert.That(Normalize(input)).IsEqualTo(expected);
     }

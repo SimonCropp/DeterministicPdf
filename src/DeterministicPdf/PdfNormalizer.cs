@@ -133,6 +133,12 @@ public static partial class PdfNormalizer
         // /PieceInfo<</PDFTRON<</LastModified(D:...)/Private/Watermark>>>>).
         ZeroPdfString(data, "/LastModified"u8, Fill.Digits, recorder, dates);
 
+        // The library that wrote the document, and its version (iText writes "iText® Core 9.7.0
+        // (AGPL version) ©2000-2026 Apryse Group NV", and appends to it each time it modifies a
+        // document). It is the same on every render, but changes with every upgrade of that library
+        // when nothing about the document did.
+        ZeroPdfString(data, "/Producer"u8, Fill.All, recorder, dates);
+
         // Trailer / cross-reference-stream file identifier: /ID [<...> <...>].
         var escapedIds = ZeroFileId(data, recorder);
 
@@ -168,6 +174,9 @@ public static partial class PdfNormalizer
         ZeroXmpProperty(data, "<stRef:documentID"u8, Fill.All, recorder, dates);
         ZeroXmpProperty(data, "<stRef:originalDocumentID"u8, Fill.All, recorder, dates);
         ZeroXmpProperty(data, "<stRef:lastModifyDate"u8, Fill.Digits, recorder, dates);
+
+        // The XMP twin of the information dictionary /Producer above.
+        ZeroXmpProperty(data, "<pdf:Producer"u8, Fill.All, recorder, dates);
 
         // Font subset tags. A producer that embeds only the glyphs a document uses prefixes the font's
         // name with a six letter tag (/BaseFont /IIJUVL+OpenSans), and some (Aspose.PDF among them) pick
