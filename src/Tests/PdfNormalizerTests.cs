@@ -419,7 +419,7 @@ public class PdfNormalizerTests
         // bytes need it, so two saves of one document spell the same eight bytes at different lengths.
         // Zeroing in place would keep that difference.
         var a = WithFileId(@"[(\000AB\(C\\D\n) (0123456789ABCDEF)]");
-        var b = WithFileId(@"[(ABCDEFGH) (0123456789ABCDEF)]");
+        var b = WithFileId("[(ABCDEFGH) (0123456789ABCDEF)]");
         await Assert.That(a.Length).IsNotEqualTo(b.Length);
 
         var normalizedA = PdfNormalizer.Normalize(a);
@@ -765,7 +765,7 @@ public class PdfNormalizerTests
         memorySource.Position = 8;
         using var fromMemory = await PdfNormalizer.NormalizeAsync(memorySource);
 
-        using var fileSource = File.OpenRead(temp.Path);
+        await using var fileSource = File.OpenRead(temp.Path);
         fileSource.Position = 8;
         using var fromFile = await PdfNormalizer.NormalizeAsync(fileSource);
 
@@ -779,7 +779,7 @@ public class PdfNormalizerTests
         var expected = PdfNormalizer.Normalize(data);
 
         // A non-seekable, non-MemoryStream source to exercise the copy path.
-        using var source = ProjectFiles.sample_fop_pdf.OpenRead();
+        await using var source = ProjectFiles.sample_fop_pdf.OpenRead();
         using var result = await PdfNormalizer.NormalizeAsync(source);
 
         await Assert.That(result.ToArray()).IsEquivalentTo(expected);
