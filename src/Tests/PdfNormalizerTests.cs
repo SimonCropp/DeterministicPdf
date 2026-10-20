@@ -616,8 +616,9 @@ public class PdfNormalizerTests
     [Test]
     public async Task RemovesHexProducer()
     {
+        // Swapped for a hex string of the same length, so the offsets the builder wrote still hold.
         var data = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z");
-        var text = Encoding.Latin1.GetString(data).Replace("/Producer (Test)", "/Producer <FEFF0054>");
+        var text = Encoding.Latin1.GetString(data).Replace("/Producer (Test)", "/Producer <0054>");
         var normalized = Encoding.Latin1.GetString(PdfNormalizer.Normalize(Encoding.Latin1.GetBytes(text)));
         await Assert.That(normalized).Contains("/Producer <>");
     }

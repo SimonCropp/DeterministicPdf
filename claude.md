@@ -102,10 +102,16 @@ spells a zero offset; `-00:00` is not a legal spelling there at all). This half 
 
 **The whole designator**, `Z` on a machine running in UTC versus `+10:30` anywhere else. Those are
 *different lengths*, so the two renders are different-sized documents and no length-preserving edit
-can ever reconcile them. `CanonicalizeDateZones` collapses every designator to `Z` — the shortest
-spelling, so an edit only ever shortens — and then repairs the cross-reference table the same way the
-packet rewrite does. It runs after the zeroing and before `CanonicalizeXmp`, so that pass sees a
-document whose offsets are already consistent.
+can ever reconcile them. `CanonicalizeLengths` collapses every designator to `Z` — the shortest
+spelling, so an edit only ever shortens — and hands the edits to `TryRewrite` (see "Repairing
+offsets" below). It runs after the zeroing and before `CanonicalizeXmp`, so that pass sees a document
+whose offsets are already consistent.
+
+The producer (`/Producer`, `pdf:Producer`) goes through the same rewrite. It is the same on every
+render but names the version of the library that wrote it, so its *length* changes with an upgrade
+(`9.10.0` after `9.9.0`). It is zeroed in place with `Fill.Text` first, and `CanonicalizeLengths`
+then removes it altogether: empty is the one spelling every version shares. The `/Producer` pass runs
+after `CanonicalizeFileIdLength`, which would otherwise have to shift where it was found.
 
 Both halves locate the designator through `TryFindTimeZone`, which looks for the `T` of an ISO 8601
 value or the `D:` prefix of a PDF date string before it starts scanning: the ISO 8601 date itself is
@@ -113,14 +119,16 @@ value or the `D:` prefix of a PDF date string before it starts scanning: the ISO
 carry a date with no time (and hence no designator) at all. The forward scan stops at the first byte
 that cannot belong to a time, so it is never run past the end of one date into the next.
 
-`CanonicalizeDateZones` finds the dates through the `NeutralizedDate` list the zeroing passes fill in
-as they go, rather than walking the keys again — a second list of date keys is exactly the kind of
-thing that drifts. Each entry also carries whether the zeroing already reported that occurrence, so a
-date both passes changed is still counted once.
+`CanonicalizeLengths` finds the dates and producers through the `NeutralizedValue` list the zeroing
+passes fill in as they go, rather than walking the keys again — a second list of keys is exactly the
+kind of thing that drifts. Each entry also carries whether the zeroing already reported that
+occurrence, so a value both passes changed is still counted once, and its `Fill`, which says whether
+it is a date to collapse or text to remove.
 
-A date inside stream data is a length it would have to restate. The metadata stream is the one it
-knows how to (that is where the XMP dates are), so an edit landing in any other stream is dropped and
-left to the in-place zeroing — see `FindStreamDataRegions` and `IsInsideOtherStream`.
+A value inside stream data is a length it would have to restate. A metadata stream (one holding an
+XMP packet; an incrementally updated document has one per revision) is the one it knows how to, so
+an edit landing in any other stream is dropped and left to the in-place zeroing — see
+`FindStreamDataRegions`, `StreamAt` and `IsMetadataStream`.
 
 ### XMP whitespace canonicalization (the hard part)
 
@@ -129,24 +137,49 @@ indentation: one machine emits a compact packet, another indents every element. 
 zeroed that whitespace is the only remaining cross-platform difference, so `CanonicalizeXmp`
 collapses inter-tag whitespace.
 
-That **changes the packet length**, which invalidates offsets. So three things are repaired:
+That **changes the packet length**, which invalidates offsets. Each packet's metadata stream
+`/Length` is restated — either the direct `/Length n` form or the indirect `/Length g 0 R` form
+(where the value lives in object `g`) — and `TryRewrite` repairs the rest. Every packet is
+canonicalized, since an incrementally updated document carries one per revision that changed its
+metadata; a packet that is not the whole content of its stream, or whose length cannot be found, is
+skipped.
 
-1. The metadata stream `/Length` — either the direct `/Length n` form or the indirect
-   `/Length g 0 R` form (where the value lives in object `g`).
-2. Every in-use cross-reference table entry's fixed 10-digit offset field.
-3. The `startxref` value.
-
-`Shift(edits, position)` maps an original byte position to its post-edit position; both the entry
-field and the object it points at are original positions run through the same map. It is shared with
-`CanonicalizeDateZones`, which repairs the same three things for the same reason.
-
-Canonicalization **bails out and returns the input unchanged** for any shape it cannot safely
-rewrite: no packet, more than one packet, a cross-reference *stream* (rather than a table), an
-incremental update (a second `startxref`), or an unlocatable stream length. The zeroing passes still
-apply in that case, since they are length-preserving and always safe.
-
-The pass is idempotent: if the content is already canonical the bytes (and the xref table) are left
+The pass is idempotent: if the content is already canonical the bytes (and the offsets) are left
 untouched.
+
+### Repairing offsets (`PdfNormalizer_CrossReferences.cs`)
+
+Every length-changing rewrite — time zones and producers, XMP packets, stripped fonts — builds a list
+of edits in original positions and hands it to `TryRewrite`, which applies them and repairs every byte
+position the document records. `TryReadCrossReferences` follows the chain from **every** `startxref`
+outside stream data, through each section's `/Prev` and a hybrid trailer's `/XRefStm`, and every
+pointer has to land on a section it can read:
+
+- A classic table: its in-use entries' fixed 10-digit offset fields, rewritten in place in the rebuilt
+  buffer with `WriteOffset` (they keep their length, so they are not edits).
+- A cross-reference stream (read at the position the pointer names, with `TryReadStreamAt`, since an
+  incrementally updated document can hold several objects of one number): inflated, its PNG predictor
+  reversed (`TryUnpredict`; iText and PDFBox write Up, predictor 12), and restated **uncompressed** —
+  `/Filter` and `/DecodeParms` dropped, `/Length` restated, the data replaced by the entries.
+  Recompressing would make the output depend on the runtime's deflate implementation. Only type 1
+  entries hold byte positions.
+- Every pointer (`startxref`, `/Prev`, `/XRefStm`) restated as the shifted position of its section.
+
+The repairs depend on where everything ends up, and where everything ends up depends on the repairs:
+a pointer that goes from `998` to `1002` grows a digit, and an uncompressed cross-reference stream is
+usually larger than the compressed one, moving every later revision. So `BuildRepairs` is run until
+the replacement lengths stop changing (two or three rounds; it gives up after sixteen). A stream's
+offset field is widened (and `/W` restated) when a shifted offset no longer fits the width its
+producer chose.
+
+`Shift(edits, position)` maps an original byte position to its post-edit position; the entry field
+and the object it points at are both original positions run through the same map.
+
+It **bails out**, and the caller returns the input unchanged, for a pointer that does not land on a
+section, an unreadable section, a filter other than `/FlateDecode`, a predictor other than PNG,
+overlapping edits, or a **linearized** document (`/Linearized` in the first object): its hint tables
+record offsets in a form this does not rewrite. The zeroing passes still apply in that case, since
+they are length-preserving and always safe.
 
 ### What is deliberately not handled
 
@@ -180,18 +213,9 @@ and builds one list of edits:
    too. The reference check is what keeps it from touching another stream's length that happens to
    match.
 
-The stream sits mid-body, so unlike the `/ID` rewrite this one does need offsets repaired, and unlike
-the time zone and XMP rewrites it has to handle a cross-reference *stream*, because that is what
-Aspose.PDF writes:
-
-- Classic table: `TryReadClassicXref`, then the same `Shift`/`WriteOffset` repair the other rewrites
-  use. A hybrid document (`/XRefStm`) bails.
-- Cross-reference stream: `TryReadXrefStream` inflates it and adds edits that restate it
-  **uncompressed** (drop `/Filter`, restate `/Length`, replace the data with the decoded entries).
-  Recompressing would make the output depend on the runtime's deflate implementation. The decoded
-  array is itself the replacement in the edit list, so `ShiftXrefStreamEntries` rewrites the type 1
-  offsets in it once all edit lengths are known and before `ApplyEdits` copies it. `/Prev`,
-  `/DecodeParms` (a predictor) and any filter but `/FlateDecode` bail.
+The stream sits mid-body, so unlike the `/ID` rewrite this one does need offsets repaired, which
+`TryRewrite` does (Aspose.PDF writes a cross-reference stream, which it handles like every other
+shape).
 
 Every bail-out returns the input array, so nothing is half-applied. A font descriptor inside an
 `/ObjStm` is invisible, so nothing is found and the document is left alone.

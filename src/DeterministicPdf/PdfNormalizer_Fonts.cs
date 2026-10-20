@@ -1,5 +1,3 @@
-using System.IO.Compression;
-
 namespace DeterministicPdf;
 
 public static partial class PdfNormalizer
@@ -7,18 +5,6 @@ public static partial class PdfNormalizer
     // An embedded font program found through the /FontFile, /FontFile2 or /FontFile3 entry of a font
     // descriptor: the entry itself (key through the 'R' of its reference) and the stream it points at.
     record struct FontFile(string Key, int EntryStart, int EntryEnd, int Number, int Generation);
-
-    // The single cross-reference stream of a document, as much of it as the repair needs: where its
-    // object starts, the bytes of its (decoded) entries and the field widths that divide them, and the
-    // edits that restate it uncompressed.
-    class XrefStream
-    {
-        public int ObjectStart;
-        public byte[] Entries = [];
-        public int TypeWidth;
-        public int OffsetWidth;
-        public int EntryWidth;
-    }
 
     // Removes every embedded font program and the font descriptor entry that points at it.
     //
@@ -32,9 +18,8 @@ public static partial class PdfNormalizer
     // runs last: every other pass sees the document as the producer wrote it.
     //
     // Every length in the font stream's dictionary is restated as 0, and since the stream usually sits
-    // in the middle of the body, everything after it moves. Both cross-reference shapes are repaired:
-    // the classic table in place, and a cross-reference stream by rewriting it uncompressed (a
-    // recompressed one would depend on the deflate implementation of the runtime doing the work).
+    // in the middle of the body, everything after it moves, and TryRewrite repairs every offset that
+    // records where.
     //
     // Returns the input array untouched when no font is embedded, or when the document is not a shape
     // this can safely rewrite.
@@ -60,50 +45,9 @@ public static partial class PdfNormalizer
             }
         }
 
-        XrefStream? xrefStream = null;
-        if (!TryReadClassicXref(data, out var xrefKeyword, out var entries, out var startxref))
-        {
-            entries = [];
-            if (!TryReadXrefStream(data, edits, out xrefStream, out startxref))
-            {
-                return data;
-            }
-
-            xrefKeyword = xrefStream.ObjectStart;
-        }
-        else if (IndexOf(data, "/XRefStm"u8, 0) >= 0)
-        {
-            // A hybrid document keeps a second set of offsets in a cross-reference stream.
-            return data;
-        }
-
-        if (!TrySortEdits(edits))
+        if (!TryRewrite(data, edits, out var rebuilt))
         {
             return data;
-        }
-
-        // startxref points at the cross-reference section, which is shifted like everything else. Its
-        // own edit trails the section, so it moves nothing the shift is asked about.
-        var all = new List<(int start, int end, byte[] replacement)>(edits)
-        {
-            (startxref.start, startxref.end, AsciiDigits(Shift(edits, xrefKeyword)))
-        };
-
-        // The entries are rewritten before the buffer is rebuilt: their replacement is already one of
-        // the edits, and holds the same array.
-        if (xrefStream != null)
-        {
-            ShiftXrefStreamEntries(xrefStream, edits);
-        }
-
-        var rebuilt = ApplyEdits(data, all);
-
-        foreach (var entry in entries)
-        {
-            if (entry.inUse)
-            {
-                WriteOffset(rebuilt, Shift(edits, entry.fieldOffset), Shift(edits, entry.objectOffset));
-            }
         }
 
         foreach (var font in fonts)
@@ -329,6 +273,17 @@ public static partial class PdfNormalizer
             return false;
         }
 
+        return TryReadStreamAt(data, body, out dictionary, out content);
+    }
+
+    // Reads the stream whose object body starts at 'body', just past its "obj". An incrementally updated
+    // document may hold several objects of one number, so a section reached through a pointer is read
+    // where the pointer says rather than found by its number.
+    static bool TryReadStreamAt(byte[] data, int body, out (int start, int end) dictionary, out (int start, int end) content)
+    {
+        dictionary = default;
+        content = default;
+
         var start = SkipWhitespace(data, body);
         var end = FindDictionaryEnd(data, start);
         if (end < 0)
@@ -359,242 +314,6 @@ public static partial class PdfNormalizer
 
         content = (contentStart, contentEnd);
         return true;
-    }
-
-    // Reads the sole cross-reference stream and adds the edits that restate it uncompressed: the
-    // /Filter entry is dropped, /Length becomes the size of the decoded entries, and the data is
-    // replaced by those entries - the same array 'xref' exposes, so the offsets can be rewritten in it
-    // once every edit is known. Returns false for anything this does not rewrite: an incremental update
-    // (/Prev, or a second startxref), a predictor (/DecodeParms), or a filter other than /FlateDecode.
-    static bool TryReadXrefStream(
-        byte[] data,
-        List<(int start, int end, byte[] replacement)> edits,
-        [NotNullWhen(true)] out XrefStream? xref,
-        out (int start, int end) startxref)
-    {
-        xref = null;
-        startxref = default;
-
-        var keyword = IndexOf(data, "startxref"u8, 0);
-        if (keyword < 0 ||
-            IndexOf(data, "startxref"u8, keyword + 1) >= 0)
-        {
-            return false;
-        }
-
-        var digits = SkipWhitespace(data, keyword + "startxref"u8.Length);
-        var cursor = digits;
-        if (!TryReadInt(data, ref cursor, out var objectStart) ||
-            objectStart >= keyword)
-        {
-            return false;
-        }
-
-        startxref = (digits, cursor);
-
-        // "number generation obj"
-        cursor = objectStart;
-        if (!TryReadInt(data, ref cursor, out var number))
-        {
-            return false;
-        }
-
-        cursor = SkipWhitespace(data, cursor);
-        if (!TryReadInt(data, ref cursor, out var generation) ||
-            !TryFindStream(data, number, generation, out var dictionary, out var content) ||
-            dictionary.start < objectStart ||
-            dictionary.start > keyword)
-        {
-            return false;
-        }
-
-        if (!TryFindKey(data, dictionary, "/Type"u8, out var type) ||
-            !StartsWith(data, type, "/XRef"u8) ||
-            TryFindKey(data, dictionary, "/Prev"u8, out _) ||
-            TryFindKey(data, dictionary, "/DecodeParms"u8, out _))
-        {
-            return false;
-        }
-
-        if (!TryFindKey(data, dictionary, "/W"u8, out var widths) ||
-            !TryReadWidths(data, widths, out var typeWidth, out var offsetWidth, out var generationWidth))
-        {
-            return false;
-        }
-
-        byte[] decoded;
-        var keyStart = IndexOf(data, "/Filter"u8, dictionary.start);
-        if (TryFindKey(data, dictionary, "/Filter"u8, out var filter))
-        {
-            if (!TryReadFlateFilter(data, filter, out var filterEnd) ||
-                !TryInflate(data, content.start, content.end - content.start, out decoded))
-            {
-                return false;
-            }
-
-            edits.Add((keyStart, filterEnd, []));
-        }
-        else
-        {
-            decoded = new byte[content.end - content.start];
-            Array.Copy(data, content.start, decoded, 0, decoded.Length);
-        }
-
-        var entryWidth = typeWidth + offsetWidth + generationWidth;
-        if (entryWidth == 0 ||
-            offsetWidth > 8 ||
-            decoded.Length % entryWidth != 0)
-        {
-            return false;
-        }
-
-        if (!TryFindKey(data, dictionary, "/Length"u8, out var lengthValue) ||
-            !TryResolveInt(data, lengthValue, out var lengthField, out _))
-        {
-            return false;
-        }
-
-        edits.Add((lengthField.start, lengthField.end, AsciiDigits(decoded.Length)));
-        edits.Add((content.start, content.end, decoded));
-
-        xref = new()
-        {
-            ObjectStart = objectStart,
-            Entries = decoded,
-            TypeWidth = typeWidth,
-            OffsetWidth = offsetWidth,
-            EntryWidth = entryWidth
-        };
-        return true;
-    }
-
-    // Rewrites the offset of every in-use entry (type 1; an absent type field means type 1) with the
-    // shifted position of its object. A free entry, and an object held in an object stream (type 2),
-    // record no byte position and are left alone.
-    static void ShiftXrefStreamEntries(XrefStream xref, List<(int start, int end, byte[] replacement)> edits)
-    {
-        var entries = xref.Entries;
-        for (var entry = 0; entry < entries.Length; entry += xref.EntryWidth)
-        {
-            if (xref.TypeWidth != 0 &&
-                ReadBigEndian(entries, entry, xref.TypeWidth) != 1)
-            {
-                continue;
-            }
-
-            var field = entry + xref.TypeWidth;
-            var offset = ReadBigEndian(entries, field, xref.OffsetWidth);
-            if (offset > int.MaxValue)
-            {
-                continue;
-            }
-
-            WriteBigEndian(entries, field, xref.OffsetWidth, Shift(edits, (int) offset));
-        }
-    }
-
-    static long ReadBigEndian(byte[] data, int position, int width)
-    {
-        long value = 0;
-        for (var index = 0; index < width; index++)
-        {
-            value = value << 8 | data[position + index];
-        }
-
-        return value;
-    }
-
-    static void WriteBigEndian(byte[] data, int position, int width, long value)
-    {
-        for (var index = width - 1; index >= 0; index--)
-        {
-            data[position + index] = (byte) value;
-            value >>= 8;
-        }
-    }
-
-    // "[type offset generation]"
-    static bool TryReadWidths(byte[] data, int position, out int type, out int offset, out int generation)
-    {
-        type = 0;
-        offset = 0;
-        generation = 0;
-        if (position >= data.Length || data[position] != (byte) '[')
-        {
-            return false;
-        }
-
-        position = SkipWhitespace(data, position + 1);
-        if (!TryReadInt(data, ref position, out type))
-        {
-            return false;
-        }
-
-        position = SkipWhitespace(data, position);
-        if (!TryReadInt(data, ref position, out offset))
-        {
-            return false;
-        }
-
-        position = SkipWhitespace(data, position);
-        return TryReadInt(data, ref position, out generation);
-    }
-
-    // Accepts "/FlateDecode" and "[/FlateDecode]", the only filter a cross-reference stream is decoded
-    // from here, and reports where the value ends.
-    static bool TryReadFlateFilter(byte[] data, int position, out int end)
-    {
-        end = -1;
-        var array = position < data.Length && data[position] == (byte) '[';
-        if (array)
-        {
-            position = SkipWhitespace(data, position + 1);
-        }
-
-        if (!StartsWith(data, position, "/FlateDecode"u8))
-        {
-            return false;
-        }
-
-        position += "/FlateDecode"u8.Length;
-        if (!array)
-        {
-            end = position;
-            return true;
-        }
-
-        position = SkipWhitespace(data, position);
-        if (position >= data.Length || data[position] != (byte) ']')
-        {
-            return false;
-        }
-
-        end = position + 1;
-        return true;
-    }
-
-    // Decodes zlib data: a two byte header, a deflate body, and a checksum the decoder never reads.
-    static bool TryInflate(byte[] data, int start, int length, out byte[] decoded)
-    {
-        decoded = [];
-        if (length < 2)
-        {
-            return false;
-        }
-
-        try
-        {
-            using var input = new MemoryStream(data, start + 2, length - 2);
-            using var deflate = new DeflateStream(input, CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            deflate.CopyTo(output);
-            decoded = output.ToArray();
-            return true;
-        }
-        catch (InvalidDataException)
-        {
-            return false;
-        }
     }
 
     // Sorts the edits by position and drops an exact repeat (two font streams naming one indirect
@@ -692,8 +411,13 @@ public static partial class PdfNormalizer
 
     // Finds 'key' in a dictionary and returns where its value starts. A longer name that merely begins
     // with the key (/Length1 for /Length, /Type for /T) is not a match.
-    static bool TryFindKey(byte[] data, (int start, int end) dictionary, ReadOnlySpan<byte> key, out int value)
+    static bool TryFindKey(byte[] data, (int start, int end) dictionary, ReadOnlySpan<byte> key, out int value) =>
+        TryFindEntry(data, dictionary, key, out _, out value);
+
+    // As TryFindKey, also reporting where the key itself starts, for an edit that removes the entry.
+    static bool TryFindEntry(byte[] data, (int start, int end) dictionary, ReadOnlySpan<byte> key, out int keyStart, out int value)
     {
+        keyStart = -1;
         value = -1;
         var position = dictionary.start;
         while (true)
@@ -710,6 +434,7 @@ public static partial class PdfNormalizer
                 continue;
             }
 
+            keyStart = hit;
             value = SkipWhitespace(data, position);
             return true;
         }
