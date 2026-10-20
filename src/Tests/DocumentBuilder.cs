@@ -8,7 +8,7 @@
 // that the rewrite which can, does.
 static class DocumentBuilder
 {
-    public static byte[] Build(string pdfDate, string xmpDate, string? extraObject = null)
+    public static byte[] Build(string pdfDate, string xmpDate, string? extraObject = null, string producer = "Test")
     {
         // The packet is written with a line per element, as a real producer serializing through an XML
         // writer emits it. Canonicalization collapses that inter-tag whitespace back out, so the
@@ -19,7 +19,8 @@ static class DocumentBuilder
              <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
              <x:xmpmeta xmlns:x="adobe:ns:meta/">
              <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-             <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+             <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
+             <pdf:Producer>{producer}</pdf:Producer>
              <xmp:CreateDate>{xmpDate}</xmp:CreateDate>
              <xmp:ModifyDate>{xmpDate}</xmp:ModifyDate>
              </rdf:Description>
@@ -37,7 +38,7 @@ static class DocumentBuilder
             "<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
-            $"<< /Producer (Test) /CreationDate ({pdfDate}) /ModDate ({pdfDate}) >>",
+            $"<< /Producer ({producer}) /CreationDate ({pdfDate}) /ModDate ({pdfDate}) >>",
             $"""
              << /Type /Metadata /Subtype /XML /Length {content.Length} >>
              stream

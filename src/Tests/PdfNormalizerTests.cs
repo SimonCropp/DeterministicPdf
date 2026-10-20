@@ -588,6 +588,52 @@ public class PdfNormalizerTests
     }
 
     [Test]
+    public async Task RemovesProducerAcrossVersions()
+    {
+        // A producer names its version, so an upgrade from 9.9.0 to 9.10.0 makes the two renders of
+        // one document different lengths, and zeroing the characters alone cannot reconcile them. The
+        // producer is removed altogether, from the information dictionary and the XMP packet, with the
+        // cross-reference table and the metadata stream length repaired behind it.
+        var before = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z", producer: "iText Core 9.9.0");
+        var after = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z", producer: "iText Core 9.10.0");
+        await Assert.That(after.Length).IsNotEqualTo(before.Length);
+
+        var fromBefore = PdfNormalizer.Normalize(before);
+        var fromAfter = PdfNormalizer.Normalize(after);
+        await Assert.That(fromAfter).IsEquivalentTo(fromBefore);
+
+        var text = Encoding.Latin1.GetString(fromAfter);
+        await Assert.That(text).Contains("/Producer ()");
+        await Assert.That(text).Contains("<pdf:Producer></pdf:Producer>");
+
+        using var reader = DocLib.Instance.GetDocReader(fromAfter, new(scalingFactor: 2));
+        await Assert.That(reader.GetPageCount()).IsEqualTo(1);
+
+        // A second pass finds the producer already empty and leaves the document as it is.
+        await Assert.That(PdfNormalizer.Normalize(fromAfter)).IsEquivalentTo(fromAfter);
+    }
+
+    [Test]
+    public async Task RemovesHexProducer()
+    {
+        var data = DocumentBuilder.Build("D:20240115093000Z", "2024-01-15T09:30:00Z");
+        var text = Encoding.Latin1.GetString(data).Replace("/Producer (Test)", "/Producer <FEFF0054>");
+        var normalized = Encoding.Latin1.GetString(PdfNormalizer.Normalize(Encoding.Latin1.GetBytes(text)));
+        await Assert.That(normalized).Contains("/Producer <>");
+    }
+
+    [Test]
+    public async Task ReportsARemovedProducerThatWasAlreadyZeroed()
+    {
+        // A producer the in-place zeroing finds already all zeros is reported by the removal instead,
+        // so the report still says the document was not yet deterministic.
+        var data = DocumentBuilder.Build("D:00000000000000Z", "0000-00-00T00:00:00Z", producer: "0000");
+        PdfNormalizer.Normalize(data, out var changes);
+        await Assert.That(changes.Select(_ => _.Name)).Contains("/Producer");
+        await Assert.That(changes.Select(_ => _.Name)).Contains("pdf:Producer");
+    }
+
+    [Test]
     public async Task CanonicalizesTimeZoneSignAcrossMachines()
     {
         // The document-level version of CanonicalizesTimeZoneSign: the same document rendered on a

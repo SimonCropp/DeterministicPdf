@@ -50,13 +50,17 @@ public static partial class PdfNormalizer
         Hex,
 
         // Zero every non-whitespace byte (for opaque identifiers).
-        All
+        All,
+
+        // Zero every non-whitespace byte, as All, and then remove the value altogether where the
+        // document can be rewritten (for text whose length varies, such as a producer's version).
+        Text
     }
 
-    // A date value one of the zeroing passes neutralized: where it ended up, what the report calls it,
-    // and whether the zeroing already reported this occurrence — so the time zone rewrite, which runs
-    // over the same values afterwards, does not count one occurrence twice.
-    record struct NeutralizedDate(byte[] Name, int Start, int End, bool Recorded);
+    // A date or text value one of the zeroing passes neutralized: where it ended up, what the report
+    // calls it, how it was filled, and whether the zeroing already reported this occurrence — so the
+    // length rewrite, which runs over the same values afterwards, does not count one occurrence twice.
+    record struct NeutralizedValue(byte[] Name, int Start, int End, bool Recorded, Fill Fill);
 
     /// <summary>
     /// Returns a normalized copy of <paramref name="data"/>. The input array is not modified.
@@ -118,26 +122,20 @@ public static partial class PdfNormalizer
     // applies, which the time zone and XMP packet passes both are) a freshly built one.
     static byte[] NormalizeCore(byte[] data, ChangeRecorder recorder, bool stripEmbeddedFonts)
     {
-        // Where every date the passes below neutralize ends up. The time zone rewrite has to find them
-        // again, and taking them from the passes themselves is what stops a second list of date keys
-        // drifting out of step with this one.
-        var dates = new List<NeutralizedDate>();
+        // Where every date and text value the passes below neutralize ends up. The length rewrite has to
+        // find them again, and taking them from the passes themselves is what stops a second list of
+        // keys drifting out of step with this one.
+        var values = new List<NeutralizedValue>();
 
         // Document information dictionary dates.
-        ZeroPdfString(data, "/CreationDate"u8, Fill.Digits, recorder, dates);
-        ZeroPdfString(data, "/ModDate"u8, Fill.Digits, recorder, dates);
+        ZeroPdfString(data, "/CreationDate"u8, Fill.Digits, recorder, values);
+        ZeroPdfString(data, "/ModDate"u8, Fill.Digits, recorder, values);
 
         // Page and page-piece dictionary modification date. A producer stamps a wall-clock time here
         // for its own private data, so it changes on every render even when nothing about the document
         // did (PDFTron writes one onto the form XObject it uses for a watermark:
         // /PieceInfo<</PDFTRON<</LastModified(D:...)/Private/Watermark>>>>).
-        ZeroPdfString(data, "/LastModified"u8, Fill.Digits, recorder, dates);
-
-        // The library that wrote the document, and its version (iText writes "iText® Core 9.7.0
-        // (AGPL version) ©2000-2026 Apryse Group NV", and appends to it each time it modifies a
-        // document). It is the same on every render, but changes with every upgrade of that library
-        // when nothing about the document did.
-        ZeroPdfString(data, "/Producer"u8, Fill.All, recorder, dates);
+        ZeroPdfString(data, "/LastModified"u8, Fill.Digits, recorder, values);
 
         // Trailer / cross-reference-stream file identifier: /ID [<...> <...>].
         var escapedIds = ZeroFileId(data, recorder);
@@ -146,37 +144,45 @@ public static partial class PdfNormalizer
         // whichever of its random bytes are not printable, so the same sixteen bytes take a different
         // number of characters on every save. Zeroing in place keeps that length, so the identifier is
         // also cut down to one '0' per byte it encoded.
-        data = CanonicalizeFileIdLength(data, escapedIds, dates);
+        data = CanonicalizeFileIdLength(data, escapedIds, values);
+
+        // The library that wrote the document, and its version (iText writes "iText® Core 9.7.0
+        // (AGPL version) ©2000-2026 Apryse Group NV", and appends to it each time it modifies a
+        // document). It is the same on every render, but changes with every upgrade of that library
+        // when nothing about the document did, and its length changes with the version (9.10.0 after
+        // 9.9.0), so the length rewrite below removes it altogether. After the identifier rewrite
+        // above, which would otherwise have to shift where it was found.
+        ZeroPdfString(data, "/Producer"u8, Fill.Text, recorder, values);
 
         // XMP metadata dates (uncompressed metadata streams only).
-        ZeroXmpProperty(data, "<xmp:CreateDate"u8, Fill.Digits, recorder, dates);
-        ZeroXmpProperty(data, "<xmp:ModifyDate"u8, Fill.Digits, recorder, dates);
-        ZeroXmpProperty(data, "<xmp:MetadataDate"u8, Fill.Digits, recorder, dates);
+        ZeroXmpProperty(data, "<xmp:CreateDate"u8, Fill.Digits, recorder, values);
+        ZeroXmpProperty(data, "<xmp:ModifyDate"u8, Fill.Digits, recorder, values);
+        ZeroXmpProperty(data, "<xmp:MetadataDate"u8, Fill.Digits, recorder, values);
 
         // Dublin Core date. Unlike the xmp:* dates above it is an ordered array (seq Date), so the
         // value is nested inside rdf:Seq/rdf:li rather than being direct text content of the element
         // (this is what Apache FOP emits). An array is also the one shape that has no attribute form,
         // which is why this is the only XMP pass with no ZeroXmpProperty counterpart.
-        ZeroXmpElementTree(data, "<dc:date"u8, "</dc:date>"u8, Fill.Digits, recorder, dates);
+        ZeroXmpElementTree(data, "<dc:date"u8, "</dc:date>"u8, Fill.Digits, recorder, values);
 
         // XMP per-generation identifiers.
-        ZeroXmpProperty(data, "<xmpMM:DocumentID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<xmpMM:InstanceID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<xmpMM:OriginalDocumentID"u8, Fill.All, recorder, dates);
+        ZeroXmpProperty(data, "<xmpMM:DocumentID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<xmpMM:InstanceID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<xmpMM:OriginalDocumentID"u8, Fill.All, recorder, values);
 
         // The volatile fields of the structs the identifiers above are referenced from: the
         // ResourceEvent (stEvt) entries of xmpMM:History and the ResourceRef (stRef) of
         // xmpMM:DerivedFrom. A producer that appends a save event to the history stamps a fresh
         // stEvt:when and stEvt:instanceID onto it on every render.
-        ZeroXmpProperty(data, "<stEvt:when"u8, Fill.Digits, recorder, dates);
-        ZeroXmpProperty(data, "<stEvt:instanceID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<stRef:instanceID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<stRef:documentID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<stRef:originalDocumentID"u8, Fill.All, recorder, dates);
-        ZeroXmpProperty(data, "<stRef:lastModifyDate"u8, Fill.Digits, recorder, dates);
+        ZeroXmpProperty(data, "<stEvt:when"u8, Fill.Digits, recorder, values);
+        ZeroXmpProperty(data, "<stEvt:instanceID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<stRef:instanceID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<stRef:documentID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<stRef:originalDocumentID"u8, Fill.All, recorder, values);
+        ZeroXmpProperty(data, "<stRef:lastModifyDate"u8, Fill.Digits, recorder, values);
 
         // The XMP twin of the information dictionary /Producer above.
-        ZeroXmpProperty(data, "<pdf:Producer"u8, Fill.All, recorder, dates);
+        ZeroXmpProperty(data, "<pdf:Producer"u8, Fill.Text, recorder, values);
 
         // Font subset tags. A producer that embeds only the glyphs a document uses prefixes the font's
         // name with a six letter tag (/BaseFont /IIJUVL+OpenSans), and some (Aspose.PDF among them) pick
@@ -186,9 +192,10 @@ public static partial class PdfNormalizer
         // Collapse every UTC offset to "Z". A producer that spells the offset "Z" on a machine in UTC
         // and "+10:30" elsewhere writes dates of different *lengths*, which no amount of zeroing can
         // reconcile, so this one is a length-changing rewrite with the same cross-reference repair the
-        // packet rewrite below needs. It records the dates it collapsed itself, since it is the only
-        // pass that knows which of them were already reported by the zeroing above.
-        data = CanonicalizeDateZones(data, dates, recorder);
+        // packet rewrite below needs. The producer values are removed in the same rewrite, for the same
+        // reason. It records the values it collapsed itself, since it is the only pass that knows which
+        // of them were already reported by the zeroing above.
+        data = CanonicalizeLengths(data, values, recorder);
 
         // Collapse the JRE-dependent XMP packet whitespace and repair the cross-reference table so the
         // output is byte-identical across platforms. This can shrink the buffer, so the result of the
@@ -213,7 +220,7 @@ public static partial class PdfNormalizer
 
     // Finds a name key, then overwrites the string value that follows it. The value may be a
     // literal string "(...)" or a hex string "<...>".
-    static void ZeroPdfString(byte[] data, ReadOnlySpan<byte> key, Fill fill, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    static void ZeroPdfString(byte[] data, ReadOnlySpan<byte> key, Fill fill, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
         var pos = 0;
         while (true)
@@ -237,7 +244,7 @@ public static partial class PdfNormalizer
             {
                 var start = i + 1;
                 var end = FindLiteralEnd(data, start);
-                Neutralize(data, start, end, fill, key, recorder, dates);
+                Neutralize(data, start, end, fill, key, recorder, values);
                 pos = end;
             }
             else if (data[i] == (byte) '<' && (i + 1 >= data.Length || data[i + 1] != (byte) '<'))
@@ -246,9 +253,16 @@ public static partial class PdfNormalizer
                 // encoding, not the date, so there is nothing there to recognize a UTC offset by.
                 var start = i + 1;
                 var end = FindByte(data, start, (byte) '>');
-                if (Overwrite(data, start, end, Fill.Hex))
+                var changed = Overwrite(data, start, end, Fill.Hex);
+                if (changed)
                 {
                     recorder.Record(key);
+                }
+
+                // Hex text is removed like literal text: an empty hex string is as empty as "()".
+                if (fill == Fill.Text)
+                {
+                    values.Add(new(key.ToArray(), start, end, changed, fill));
                 }
 
                 pos = end;
@@ -403,7 +417,7 @@ public static partial class PdfNormalizer
     // incrementally updated document, the first trailer of a linearized one) keeps the length it had.
     //
     // 'dates' holds positions in the buffer being replaced, so any that trail an edit are shifted.
-    static byte[] CanonicalizeFileIdLength(byte[] data, List<(int start, int end, int length)> escaped, List<NeutralizedDate> dates)
+    static byte[] CanonicalizeFileIdLength(byte[] data, List<(int start, int end, int length)> escaped, List<NeutralizedValue> values)
     {
         var edits = new List<(int start, int end, byte[] replacement)>();
         foreach (var (start, end, length) in escaped)
@@ -423,13 +437,13 @@ public static partial class PdfNormalizer
             return data;
         }
 
-        for (var index = 0; index < dates.Count; index++)
+        for (var index = 0; index < values.Count; index++)
         {
-            var date = dates[index];
-            dates[index] = date with
+            var value = values[index];
+            values[index] = value with
             {
-                Start = Shift(edits, date.Start),
-                End = Shift(edits, date.End)
+                Start = Shift(edits, value.Start),
+                End = Shift(edits, value.End)
             };
         }
 
@@ -511,14 +525,14 @@ public static partial class PdfNormalizer
     // rdf:Description or rdf:li. A document uses one or the other, so at most one of the two finds
     // anything, and both report under the same name: the report names the property, not the shape the
     // producer happened to write it in.
-    static void ZeroXmpProperty(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    static void ZeroXmpProperty(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
-        ZeroXmpElement(data, openTag, fill, recorder, dates);
-        ZeroXmpAttribute(data, openTag[1..], fill, recorder, dates);
+        ZeroXmpElement(data, openTag, fill, recorder, values);
+        ZeroXmpAttribute(data, openTag[1..], fill, recorder, values);
     }
 
     // Finds an XMP element by its opening tag and zeroes the text content up to the next '<'.
-    static void ZeroXmpElement(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    static void ZeroXmpElement(byte[] data, ReadOnlySpan<byte> openTag, Fill fill, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
         var pos = 0;
         while (true)
@@ -531,7 +545,7 @@ public static partial class PdfNormalizer
 
             // Past the '<', so the report names the element rather than its opening tag.
             var end = FindByte(data, start, (byte) '<');
-            Neutralize(data, start, end, fill, openTag[1..], recorder, dates);
+            Neutralize(data, start, end, fill, openTag[1..], recorder, values);
             pos = end;
         }
     }
@@ -540,7 +554,7 @@ public static partial class PdfNormalizer
     // node up to the matching close tag. XMP array properties (for example dc:date, a "seq Date")
     // wrap their value in an rdf:Seq/rdf:li list, so the volatile value is not direct text content of
     // the named element and ZeroXmpElement alone would step over it.
-    static void ZeroXmpElementTree(byte[] data, ReadOnlySpan<byte> openTag, ReadOnlySpan<byte> closeTag, Fill fill, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    static void ZeroXmpElementTree(byte[] data, ReadOnlySpan<byte> openTag, ReadOnlySpan<byte> closeTag, Fill fill, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
         var pos = 0;
         while (true)
@@ -574,7 +588,7 @@ public static partial class PdfNormalizer
                 }
 
                 var textEnd = FindByte(data, i, (byte) '<');
-                Neutralize(data, i, textEnd, fill, openTag[1..], recorder, dates);
+                Neutralize(data, i, textEnd, fill, openTag[1..], recorder, values);
                 i = textEnd;
             }
 
@@ -638,7 +652,7 @@ public static partial class PdfNormalizer
     // value. The compact RDF serialization carries a simple property as an attribute of
     // rdf:Description (xmp:CreateDate="2024-01-15T09:30:00Z") rather than as an element, and
     // ZeroXmpElement, which matches on a '<' followed by the name, steps straight over that.
-    static void ZeroXmpAttribute(byte[] data, ReadOnlySpan<byte> name, Fill fill, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    static void ZeroXmpAttribute(byte[] data, ReadOnlySpan<byte> name, Fill fill, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
         var pos = 0;
         while (true)
@@ -688,15 +702,15 @@ public static partial class PdfNormalizer
 
             var start = i + 1;
             var end = FindByte(data, start, quote);
-            Neutralize(data, start, end, fill, name, recorder, dates);
+            Neutralize(data, start, end, fill, name, recorder, values);
             pos = end;
         }
     }
 
     // Neutralizes one value: overwrites it, reports it under 'name' when bytes really differed, and,
-    // when the value is a date, remembers where it ended up so the time zone rewrite can pick it up
-    // without a second list of date keys of its own.
-    static void Neutralize(byte[] data, int start, int end, Fill fill, ReadOnlySpan<byte> name, ChangeRecorder recorder, List<NeutralizedDate> dates)
+    // when the value is a date or text, remembers where it ended up so the length rewrite can pick it
+    // up without a second list of keys of its own.
+    static void Neutralize(byte[] data, int start, int end, Fill fill, ReadOnlySpan<byte> name, ChangeRecorder recorder, List<NeutralizedValue> values)
     {
         var changed = Overwrite(data, start, end, fill);
         if (changed)
@@ -704,9 +718,9 @@ public static partial class PdfNormalizer
             recorder.Record(name);
         }
 
-        if (fill == Fill.Digits)
+        if (fill is Fill.Digits or Fill.Text)
         {
-            dates.Add(new(name.ToArray(), start, end, changed));
+            values.Add(new(name.ToArray(), start, end, changed, fill));
         }
     }
 
@@ -748,7 +762,7 @@ public static partial class PdfNormalizer
     // denote the same zeroed instant, and '+' is how ISO 8601 spells a zero offset ("-00:00" is not
     // even a legal spelling there).
     //
-    // CanonicalizeDateZones goes on to collapse the whole offset to "Z", which subsumes this — but
+    // CanonicalizeLengths goes on to collapse the whole offset to "Z", which subsumes this — but
     // only for documents it can safely rewrite. This is the length-preserving half, and it always
     // applies.
     static bool CanonicalizeTimeZoneSign(byte[] data, int start, int end)
@@ -989,10 +1003,13 @@ public static partial class PdfNormalizer
     // rewrite needs. "Z" is chosen because it is the shortest, so every edit shortens the document and
     // no date that lacks an offset has to grow one.
     //
+    // A text value (the producer) is removed altogether in the same rewrite, for the same reason: its
+    // length changes with the version it names, and empty is the one spelling every version shares.
+    //
     // Returns the input array untouched when there is nothing to collapse, or when the document is not a
     // shape this can safely rewrite - the in-place zeroing above still stands in that case, and with it
     // CanonicalizeTimeZoneSign, which is as far as a length-preserving edit can get.
-    static byte[] CanonicalizeDateZones(byte[] data, List<NeutralizedDate> dates, ChangeRecorder recorder)
+    static byte[] CanonicalizeLengths(byte[] data, List<NeutralizedValue> values, ChangeRecorder recorder)
     {
         // A rewrite inside stream data changes that stream's length. The metadata stream is the one
         // whose length this can restate (it is the one the XMP dates live in), so an edit landing in
@@ -1010,26 +1027,44 @@ public static partial class PdfNormalizer
         }
 
         var edits = new List<(int start, int end, byte[] replacement)>();
-        var collapsed = new List<NeutralizedDate>();
+        var collapsed = new List<NeutralizedValue>();
         var metadataDelta = 0;
-        foreach (var date in dates)
+        foreach (var value in values)
         {
-            if (!TryFindTimeZone(data, date.Start, date.End, out var zone) ||
-                zone.end - zone.start == 1 && data[zone.start] == (byte) 'Z')
+            (int start, int end) span;
+            byte[] replacement;
+            if (value.Fill == Fill.Text)
+            {
+                // Text is removed altogether: no spelling of it has a fixed length.
+                if (value.End == value.Start)
+                {
+                    continue;
+                }
+
+                span = (value.Start, value.End);
+                replacement = [];
+            }
+            else
+            {
+                if (!TryFindTimeZone(data, value.Start, value.End, out span) ||
+                    span.end - span.start == 1 && data[span.start] == (byte) 'Z')
+                {
+                    continue;
+                }
+
+                replacement = "Z"u8.ToArray();
+            }
+
+            if (IsInsideOtherStream(streams, metadata, span.start))
             {
                 continue;
             }
 
-            if (IsInsideOtherStream(streams, metadata, zone.start))
+            edits.Add((span.start, span.end, replacement));
+            collapsed.Add(value);
+            if (Contains(metadata, span.start))
             {
-                continue;
-            }
-
-            edits.Add((zone.start, zone.end, "Z"u8.ToArray()));
-            collapsed.Add(date);
-            if (Contains(metadata, zone.start))
-            {
-                metadataDelta += 1 - (zone.end - zone.start);
+                metadataDelta += replacement.Length - (span.end - span.start);
             }
         }
 
@@ -1083,11 +1118,11 @@ public static partial class PdfNormalizer
 
         // Only now that the rewrite is certain, and only for occurrences the zeroing did not already
         // report: the count is occurrences altered, not passes that touched them.
-        foreach (var date in collapsed)
+        foreach (var value in collapsed)
         {
-            if (!date.Recorded)
+            if (!value.Recorded)
             {
-                recorder.Record(date.Name);
+                recorder.Record(value.Name);
             }
         }
 
