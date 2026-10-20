@@ -1203,7 +1203,6 @@ public static partial class PdfNormalizer
                 break;
             }
 
-            position = packetStart + 1;
             var endTag = IndexOf(data, "<?xpacket end"u8, packetStart);
             if (endTag < 0)
             {

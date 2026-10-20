@@ -1,5 +1,3 @@
-using System.IO.Compression;
-
 namespace DeterministicPdf;
 
 public static partial class PdfNormalizer
